@@ -1,0 +1,191 @@
+{
+  "$defs": {
+    "LLMComplexity": {
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Max",
+          "type": "string"
+        },
+        "max_changed_lines": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Changed Lines"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "required": [
+        "max",
+        "model"
+      ],
+      "title": "LLMComplexity",
+      "type": "object"
+    },
+    "LLMCustom": {
+      "additionalProperties": false,
+      "properties": {
+        "max_changed_lines": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Changed Lines"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt": {
+          "minLength": 1,
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "prompt"
+      ],
+      "title": "LLMCustom",
+      "type": "object"
+    },
+    "LLMGates": {
+      "additionalProperties": false,
+      "properties": {
+        "complexity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMComplexity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "custom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMCustom"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "LLMGates",
+      "type": "object"
+    },
+    "RuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "llm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMGates"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "options": {
+          "additionalProperties": true,
+          "title": "Options",
+          "type": "object"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "statuses": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "modified",
+                  "added",
+                  "removed",
+                  "renamed",
+                  "copied",
+                  "changed",
+                  "unchanged"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statuses"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "RuleConfig",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "rules": {
+      "items": {
+        "$ref": "#/$defs/RuleConfig"
+      },
+      "title": "Rules",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "rules"
+  ],
+  "title": "ProfileConfig",
+  "type": "object"
+}

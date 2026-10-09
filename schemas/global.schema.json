@@ -1,0 +1,408 @@
+{
+  "$defs": {
+    "CIConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "expected": {
+          "items": {
+            "$ref": "#/$defs/CheckSelector"
+          },
+          "title": "Expected",
+          "type": "array"
+        },
+        "ignore": {
+          "items": {
+            "$ref": "#/$defs/CheckSelector"
+          },
+          "title": "Ignore",
+          "type": "array"
+        },
+        "min_successful_checks": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Min Successful Checks",
+          "type": "integer"
+        }
+      },
+      "title": "CIConfig",
+      "type": "object"
+    },
+    "CheckSelector": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CheckSelector",
+      "type": "object"
+    },
+    "HumanReviewConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "comment": {
+          "default": true,
+          "title": "Comment",
+          "type": "boolean"
+        },
+        "mention": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Mention",
+          "type": "array"
+        }
+      },
+      "title": "HumanReviewConfig",
+      "type": "object"
+    },
+    "LLMComplexity": {
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Max",
+          "type": "string"
+        },
+        "max_changed_lines": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Changed Lines"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "required": [
+        "max",
+        "model"
+      ],
+      "title": "LLMComplexity",
+      "type": "object"
+    },
+    "LLMCustom": {
+      "additionalProperties": false,
+      "properties": {
+        "max_changed_lines": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Changed Lines"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt": {
+          "minLength": 1,
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "prompt"
+      ],
+      "title": "LLMCustom",
+      "type": "object"
+    },
+    "LLMGates": {
+      "additionalProperties": false,
+      "properties": {
+        "complexity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMComplexity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "custom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMCustom"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "LLMGates",
+      "type": "object"
+    },
+    "LimitsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "exclude_from_line_count": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Exclude From Line Count",
+          "type": "array"
+        },
+        "max_changed_lines": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 200,
+          "title": "Max Changed Lines"
+        }
+      },
+      "title": "LimitsConfig",
+      "type": "object"
+    },
+    "MergeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "default": "squash",
+          "enum": [
+            "merge",
+            "squash",
+            "rebase"
+          ],
+          "title": "Method",
+          "type": "string"
+        }
+      },
+      "title": "MergeConfig",
+      "type": "object"
+    },
+    "MergeRisk": {
+      "enum": [
+        "minimal",
+        "low",
+        "moderate",
+        "high",
+        "critical"
+      ],
+      "title": "MergeRisk",
+      "type": "string"
+    },
+    "PolicyConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "ci": {
+          "$ref": "#/$defs/CIConfig"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "human_review": {
+          "$ref": "#/$defs/HumanReviewConfig"
+        },
+        "limits": {
+          "$ref": "#/$defs/LimitsConfig"
+        },
+        "merge": {
+          "$ref": "#/$defs/MergeConfig"
+        },
+        "profiles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Profiles",
+          "type": "array"
+        },
+        "review": {
+          "$ref": "#/$defs/ReviewConfig"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/RuleConfig"
+          },
+          "title": "Rules",
+          "type": "array"
+        },
+        "trusted_authors": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trusted Authors"
+        }
+      },
+      "title": "PolicyConfig",
+      "type": "object"
+    },
+    "ReviewConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "max_finding_severity": {
+          "$ref": "#/$defs/Severity",
+          "default": "medium"
+        },
+        "max_merge_risk": {
+          "$ref": "#/$defs/MergeRisk",
+          "default": "moderate"
+        },
+        "plugin": {
+          "default": "coderabbit",
+          "title": "Plugin",
+          "type": "string"
+        }
+      },
+      "title": "ReviewConfig",
+      "type": "object"
+    },
+    "RuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "llm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMGates"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "options": {
+          "additionalProperties": true,
+          "title": "Options",
+          "type": "object"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "statuses": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "modified",
+                  "added",
+                  "removed",
+                  "renamed",
+                  "copied",
+                  "changed",
+                  "unchanged"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statuses"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "RuleConfig",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "allowed_models": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Models",
+      "type": "array"
+    },
+    "defaults": {
+      "$ref": "#/$defs/PolicyConfig"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "defaults"
+  ],
+  "title": "GlobalConfig",
+  "type": "object"
+}

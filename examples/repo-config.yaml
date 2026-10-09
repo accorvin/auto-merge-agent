@@ -1,0 +1,43 @@
+schema_version: 1
+# Replace the check names and review contacts, then enable the repo.
+enabled: false
+profiles:
+  - go-dependencies
+ci:
+  expected:
+    - name: unit-tests
+      source: github-actions
+  ignore:
+    - name: tide
+    - name: CodeRabbit
+      source: coderabbitai[bot]
+limits:
+  max_changed_lines: 200
+  exclude_from_line_count:
+    - go.sum
+rules:
+  - id: low-risk-maintenance
+    type: changed_paths_only
+    paths:
+      - "*.go"
+      - README.md
+      - docs/**
+    statuses: [modified, added]
+    llm:
+      complexity:
+        model: gpt-6-sol
+        max: low
+        max_changed_lines: 100
+      custom:
+        model: gpt-6-sol
+        max_changed_lines: 100
+        prompt: >-
+          Require human review for public API or interface-contract changes,
+          new externally reachable behavior, or unclear compatibility,
+          security, or data-handling effects.
+merge:
+  method: squash
+human_review:
+  comment: true
+  mention:
+    - "@example-org/maintainers"

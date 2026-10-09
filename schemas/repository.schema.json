@@ -1,0 +1,527 @@
+{
+  "$defs": {
+    "CILayer": {
+      "additionalProperties": false,
+      "properties": {
+        "expected": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CheckSelector"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected"
+        },
+        "ignore": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CheckSelector"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ignore"
+        },
+        "min_successful_checks": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Successful Checks"
+        }
+      },
+      "title": "CILayer",
+      "type": "object"
+    },
+    "CheckSelector": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CheckSelector",
+      "type": "object"
+    },
+    "HumanReviewLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "comment": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comment"
+        },
+        "mention": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mention"
+        }
+      },
+      "title": "HumanReviewLayer",
+      "type": "object"
+    },
+    "LLMComplexity": {
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Max",
+          "type": "string"
+        },
+        "max_changed_lines": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Changed Lines"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "required": [
+        "max",
+        "model"
+      ],
+      "title": "LLMComplexity",
+      "type": "object"
+    },
+    "LLMCustom": {
+      "additionalProperties": false,
+      "properties": {
+        "max_changed_lines": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Changed Lines"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt": {
+          "minLength": 1,
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "prompt"
+      ],
+      "title": "LLMCustom",
+      "type": "object"
+    },
+    "LLMGates": {
+      "additionalProperties": false,
+      "properties": {
+        "complexity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMComplexity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "custom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMCustom"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "LLMGates",
+      "type": "object"
+    },
+    "LimitsLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "exclude_from_line_count": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exclude From Line Count"
+        },
+        "max_changed_lines": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Changed Lines"
+        }
+      },
+      "title": "LimitsLayer",
+      "type": "object"
+    },
+    "MergeLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "anyOf": [
+            {
+              "enum": [
+                "merge",
+                "squash",
+                "rebase"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        }
+      },
+      "title": "MergeLayer",
+      "type": "object"
+    },
+    "MergeRisk": {
+      "enum": [
+        "minimal",
+        "low",
+        "moderate",
+        "high",
+        "critical"
+      ],
+      "title": "MergeRisk",
+      "type": "string"
+    },
+    "ReviewLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "max_finding_severity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Severity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_merge_risk": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MergeRisk"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plugin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plugin"
+        }
+      },
+      "title": "ReviewLayer",
+      "type": "object"
+    },
+    "RuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "llm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMGates"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "options": {
+          "additionalProperties": true,
+          "title": "Options",
+          "type": "object"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "statuses": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "modified",
+                  "added",
+                  "removed",
+                  "renamed",
+                  "copied",
+                  "changed",
+                  "unchanged"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statuses"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "RuleConfig",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "ci": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CILayer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "enabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Enabled"
+    },
+    "human_review": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/HumanReviewLayer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "limits": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LimitsLayer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "merge": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MergeLayer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "profiles": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profiles"
+    },
+    "review": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReviewLayer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "rules": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/RuleConfig"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rules"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "trusted_authors": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Trusted Authors"
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "ConfigLayer",
+  "type": "object"
+}
