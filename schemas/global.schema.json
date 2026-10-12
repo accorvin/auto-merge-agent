@@ -243,6 +243,13 @@
         "limits": {
           "$ref": "#/$defs/LimitsConfig"
         },
+        "llm_context_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Llm Context Files",
+          "type": "array"
+        },
         "merge": {
           "$ref": "#/$defs/MergeConfig"
         },

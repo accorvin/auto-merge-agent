@@ -104,3 +104,25 @@ def test_enabled_repo_requires_expected_checks(tmp_path):
     write(tmp_path / "configs/github.com/acme/repo/config.yaml", "schema_version: 1\nenabled: true\n")
     with pytest.raises(ConfigError, match="requires expected CI"):
         ConfigStore(tmp_path).load("github.com", "acme", "repo")
+
+
+def test_context_file_changes_revision_and_explicit_paths_are_inherited(tmp_path):
+    setup_config(tmp_path)
+    write(tmp_path / "configs/github.com/acme/config.yaml", "schema_version: 1\nllm_context_files: [docs/merge-policy.md]\n")
+    write(tmp_path / "configs/github.com/acme/repo/config.yaml", "schema_version: 1\n")
+    store = ConfigStore(tmp_path)
+    first = store.load("github.com", "acme", "repo")
+    assert first.policy.llm_context_files == ["docs/merge-policy.md"]
+    context = tmp_path / "configs/github.com/acme/repo/context.md"
+    write(context, "Follow the release checklist.")
+    second = store.load("github.com", "acme", "repo")
+    assert second.llm_context == "Follow the release checklist."
+    assert second.revision != first.revision
+
+
+@pytest.mark.parametrize("path", ["../secrets", "/absolute", "a//b", "a/./b", "a\\b"])
+def test_context_file_paths_must_be_relative(tmp_path, path):
+    setup_config(tmp_path)
+    write(tmp_path / "configs/github.com/acme/repo/config.yaml", f"schema_version: 1\nllm_context_files: [{path!r}]\n")
+    with pytest.raises(ConfigError, match="Invalid llm_context_files path"):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")

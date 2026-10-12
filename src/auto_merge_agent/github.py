@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import jwt
@@ -136,6 +139,29 @@ class GitHubForge:
     async def get_changed_files(self, pr: PullRequestSnapshot) -> list[ChangedFile]:
         data = await self._pages(pr.ref, f"/repos/{pr.ref.slug}/pulls/{pr.ref.number}/files")
         return [ChangedFile(path=item["filename"], additions=item["additions"], deletions=item["deletions"], status=item["status"], patch=item.get("patch")) for item in data]
+
+    async def get_repository_file(self, pr: PullRequestSnapshot, path: str) -> str | None:
+        encoded_path = "/".join(quote(part, safe="") for part in path.split("/"))
+        try:
+            data = await self._call(
+                pr.ref, "GET", f"/repos/{pr.ref.slug}/contents/{encoded_path}",
+                params={"ref": pr.base_sha},
+            )
+        except GitHubError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        if not isinstance(data, dict) or data.get("type") != "file" or data.get("encoding") != "base64":
+            raise GitHubError(f"Invalid repository context file: {path}")
+        if data.get("size", 0) > 20_000:
+            raise GitHubError(f"Repository context file exceeds 20 KB: {path}")
+        try:
+            content = base64.b64decode("".join(data["content"].split()), validate=True)
+            if len(content) > 20_000:
+                raise GitHubError(f"Repository context file exceeds 20 KB: {path}")
+            return content.decode("utf-8")
+        except (KeyError, ValueError, UnicodeError, binascii.Error) as exc:
+            raise GitHubError(f"Invalid UTF-8 repository context file: {path}") from exc
 
     async def get_checks(self, pr: PullRequestSnapshot) -> list[Check]:
         ref = pr.ref

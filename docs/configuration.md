@@ -10,6 +10,7 @@ profiles/<profile>.yaml
 configs/github.com/<owner>/config.yaml              # Optional
 configs/github.com/<owner>/<repo>/config.yaml        # Required to evaluate a repo
 configs/github.com/<owner>/<repo>/OWNERS             # Required
+configs/github.com/<owner>/<repo>/context.md        # Optional LLM guidance
 OWNERS                                               # Required for config-repo validation
 ```
 
@@ -59,6 +60,7 @@ Replace the CI check name and owner login with values from the target repo. `ena
 | `limits.max_changed_lines` | Repo-wide cap on additions plus deletions. Set `null` to remove this cap; default `200`. |
 | `limits.exclude_from_line_count` | Path patterns omitted from line counts, such as generated lockfiles. |
 | `profiles` | Names of reusable files in `profiles/`. |
+| `llm_context_files` | Optional list of relative paths to LLM guidance files in the target repository. The list replaces inherited values. |
 | `rules` | Repo eligibility rules; any one may qualify after all mandatory gates pass. |
 | `merge.method` | `merge`, `squash`, or `rebase`; default `squash`. |
 | `human_review.comment` | Whether to post and update the human-review explanation comment. |
@@ -92,6 +94,16 @@ llm:
 ```
 
 Each section's `max_changed_lines` is optional and independent. The agent applies `limits.exclude_from_line_count` to these caps and checks them before any model call. Exceeding a cap sends the PR to human review. Complexity is `low`, `medium`, or `high`; the custom step must return a structured `safe_to_merge` boolean and reason. The custom prompt can add a requirement but cannot override mandatory gates. Unavailable full-text patches or an LLM input above the built-in size limit also prevent automerge.
+
+For LLM rules, an optional `context.md` beside the repo's policy `config.yaml` is included automatically. The agent also reads the target repository's root `AGENTS.md`; if absent, it reads root `CLAUDE.md`. To include other files, set a list of paths in the policy:
+
+```yaml
+llm_context_files:
+  - docs/merge-policy.md
+  - .github/maintainer-guidance.md
+```
+
+Target-repository files are read at the PR's base commit. This keeps a PR from changing the guidance used to evaluate itself. Explicitly listed files must exist at that commit; a missing file requires human review, while an API read failure makes the decision wait. Missing `AGENTS.md` and `CLAUDE.md` are allowed. Each context file must be UTF-8 and at most 20 KB; the combined LLM input limit is 100,000 characters. Context guides both complexity and custom judgments but cannot override mandatory gates. A change to the policy checkout's `context.md` changes the config revision.
 
 Model IDs are listed directly in `config/global.yaml:allowed_models`. A repo may select only an allowed ID. LangChain infers providers for recognized model names; use the same `provider:model-id` string in both places when provider inference is ambiguous. OpenAI models require `OPENAI_API_KEY` at runtime. Do not store API keys in YAML.
 

@@ -46,10 +46,13 @@ config/global.yaml                         # Defaults and allowed model IDs
 configs/github.com/<owner>/config.yaml     # Optional owner defaults
 configs/github.com/<owner>/<repo>/config.yaml
 configs/github.com/<owner>/<repo>/OWNERS   # Default trusted PR authors
+configs/github.com/<owner>/<repo>/context.md # Optional LLM guidance
 OWNERS                                     # Ownership of this agent repo
 ```
 
 Repo settings override owner settings; nested maps merge and lists replace inherited lists. The service evaluates only repositories with an enabled, valid config.
+
+LLM rules automatically include the policy directory's `context.md` and the target repo's root `AGENTS.md` (or `CLAUDE.md` if `AGENTS.md` is absent). Set `llm_context_files: [docs/merge-policy.md]` in `config.yaml` for additional target-repo files. Target-repo context comes from the PR base commit. See [configuration](docs/configuration.md#rules-and-llm-gates) for details.
 
 ### Example: dependency bumps and small fixes
 

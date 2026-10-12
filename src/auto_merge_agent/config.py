@@ -114,10 +114,21 @@ class ConfigStore:
             load_plugin("reviewers", policy.review.plugin)
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
+        context_path = paths[1].parent / "context.md"
+        llm_context = ""
+        if context_path.exists():
+            if not context_path.is_file():
+                raise ConfigError(f"{context_path} must be a file")
+            try:
+                llm_context = context_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                raise ConfigError(f"Cannot read {context_path}: {exc}") from exc
+            if len(llm_context.encode("utf-8")) > 20_000:
+                raise ConfigError(f"{context_path} exceeds the 20 KB LLM context limit")
         policy = policy.model_copy(update={"rules": rules})
-        canonical = json.dumps({"policy": policy.model_dump(mode="json"), "allowed_models": sorted(global_config.allowed_models), "trusted_authors": trusted_authors}, sort_keys=True)
+        canonical = json.dumps({"policy": policy.model_dump(mode="json"), "allowed_models": sorted(global_config.allowed_models), "trusted_authors": trusted_authors, "llm_context": llm_context}, sort_keys=True)
         revision = hashlib.sha256(canonical.encode()).hexdigest()[:16]
-        return LoadedConfig(policy=policy, allowed_models=global_config.allowed_models, trusted_authors=trusted_authors, revision=revision)
+        return LoadedConfig(policy=policy, allowed_models=global_config.allowed_models, trusted_authors=trusted_authors, revision=revision, llm_context=llm_context)
 
     def validate_all(self) -> list[str]:
         if not (self.root / "OWNERS").is_file():

@@ -446,6 +446,21 @@
       ],
       "default": null
     },
+    "llm_context_files": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Llm Context Files"
+    },
     "merge": {
       "anyOf": [
         {

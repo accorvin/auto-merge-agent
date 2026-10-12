@@ -17,6 +17,8 @@ REF = PullRequestRef(owner="mprahl", repo="test-automerge", number=1)
 class DemoForge:
     def __init__(self, files: list[ChangedFile]):
         self.files = files
+        self.repository_files = {}
+        self.context_requests = []
         self.checks = [
             Check(name="lint", source="github-actions", status="completed", conclusion="success"),
             Check(name="CodeRabbit", source="coderabbitai[bot]", status="completed", conclusion="success"),
@@ -38,6 +40,10 @@ class DemoForge:
     async def get_review_artifacts(self, pr):
         return []
 
+    async def get_repository_file(self, pr, path):
+        self.context_requests.append((path, pr.base_sha))
+        return self.repository_files.get(path)
+
 
 class DemoReviewer:
     def assess(self, pr, artifacts):
@@ -51,9 +57,11 @@ class DemoJudge:
     def __init__(self, state="pass"):
         self.state = state
         self.calls = 0
+        self.context = None
 
-    async def evaluate(self, gates, files, title, body):
+    async def evaluate(self, gates, files, title, body, context):
         self.calls += 1
+        self.context = context
         return GateResult(state=self.state, reason="Demo LLM judgment")
 
 
@@ -158,3 +166,48 @@ rules:
     assert result.state == "human_review"
     assert "custom LLM limit 5 exceeded" in result.reasons[0]
     assert judge.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_llm_context_uses_agents_and_explicit_base_files(tmp_path):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/global.yaml").write_text((ROOT / "config/global.yaml").read_text())
+    (tmp_path / "profiles").mkdir()
+    (tmp_path / "profiles/go-dependencies.yaml").write_text((ROOT / "profiles/go-dependencies.yaml").read_text())
+    repo_dir = tmp_path / "configs/github.com/mprahl/test-automerge"
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "OWNERS").write_text("approvers: [mprahl]\n")
+    (repo_dir / "config.yaml").write_text(
+        (ROOT / "configs/github.com/mprahl/test-automerge/config.yaml").read_text()
+        + "\nllm_context_files: [docs/merge-policy.md]\n"
+    )
+    (repo_dir / "context.md").write_text("Policy checkout guidance")
+    forge = DemoForge([file("main.go")])
+    forge.repository_files = {
+        "AGENTS.md": "Repository instructions",
+        "CLAUDE.md": "Fallback instructions",
+        "docs/merge-policy.md": "Merge policy",
+    }
+    judge = DemoJudge()
+    _, result = await EvaluationEngine(ConfigStore(tmp_path), forge, DemoReviewer(), judge).evaluate(REF)
+    assert result.state == "eligible"
+    assert judge.context == {
+        "policy/context.md": "Policy checkout guidance",
+        "repository/AGENTS.md": "Repository instructions",
+        "repository/docs/merge-policy.md": "Merge policy",
+    }
+    assert forge.context_requests == [("AGENTS.md", "b" * 40), ("docs/merge-policy.md", "b" * 40)]
+    del forge.repository_files["docs/merge-policy.md"]
+    _, missing = await EvaluationEngine(ConfigStore(tmp_path), forge, DemoReviewer(), judge).evaluate(REF)
+    assert missing.state == "human_review"
+    assert "Configured LLM context file missing" in missing.reasons[0]
+
+
+@pytest.mark.asyncio
+async def test_llm_context_falls_back_to_claude():
+    forge = DemoForge([file("main.go")])
+    forge.repository_files = {"CLAUDE.md": "Fallback instructions"}
+    judge = DemoJudge()
+    _, result = await EvaluationEngine(ConfigStore(ROOT), forge, DemoReviewer(), judge).evaluate(REF)
+    assert result.state == "eligible"
+    assert judge.context == {"repository/CLAUDE.md": "Fallback instructions"}

@@ -185,9 +185,28 @@ class EvaluationEngine:
             return {"decision": Decision(state="human_review", head_sha=pr.head_sha, reasons=reasons, config_revision=config.revision)}
         if self.judge is None:
             return {"decision": Decision(state="human_review", head_sha=pr.head_sha, reasons=reasons + ["LLM evaluator unavailable"], config_revision=config.revision)}
+        context: dict[str, str] = {}
+        if config.llm_context:
+            context["policy/context.md"] = config.llm_context
+        try:
+            instructions = await self.forge.get_repository_file(pr, "AGENTS.md")
+            if instructions is not None:
+                context["repository/AGENTS.md"] = instructions
+            else:
+                instructions = await self.forge.get_repository_file(pr, "CLAUDE.md")
+                if instructions is not None:
+                    context["repository/CLAUDE.md"] = instructions
+            for path in config.policy.llm_context_files:
+                content = await self.forge.get_repository_file(pr, path)
+                if content is None:
+                    return {"decision": Decision(state="human_review", head_sha=pr.head_sha, reasons=reasons + [f"Configured LLM context file missing at base commit: {path}"], config_revision=config.revision)}
+                context[f"repository/{path}"] = content
+        except Exception as exc:
+            logger.exception("Could not load LLM context for %s#%s", pr.ref.slug, pr.ref.number)
+            return {"decision": Decision(state="waiting", head_sha=pr.head_sha, reasons=reasons + [f"LLM context unavailable: {type(exc).__name__}"], config_revision=config.revision)}
         waiting = False
         for rule in candidates:
-            verdict = await self.judge.evaluate(rule.llm, state["files"], pr.title, pr.body)
+            verdict = await self.judge.evaluate(rule.llm, state["files"], pr.title, pr.body, context)
             if verdict.state == "pass":
                 llm_checks = verdict.passed_checks or [
                     f"LLM {name} criterion passed ({getattr(rule.llm, name).model})"

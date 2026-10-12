@@ -1,3 +1,4 @@
+import base64
 import json
 
 import httpx
@@ -5,6 +6,30 @@ import pytest
 
 from auto_merge_agent.github import GitHubError, GitHubForge
 from auto_merge_agent.types import Decision, PullRequestRef, PullRequestSnapshot
+
+
+@pytest.mark.asyncio
+async def test_repository_context_is_read_from_base_commit():
+    requested = []
+
+    def handler(request):
+        requested.append(request)
+        if request.url.path.endswith("/AGENTS.md"):
+            return httpx.Response(200, json={"type": "file", "encoding": "base64", "size": 11,
+                                             "content": base64.b64encode(b"Use caution").decode()})
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    forge = GitHubForge(token="test", api_url="https://api.github.test", client=client)
+    ref = PullRequestRef(owner="acme", repo="repo", number=12)
+    pr = PullRequestSnapshot(ref=ref, head_sha="a" * 40, base_sha="b" * 40,
+                             state="open", draft=False, title="Test", url="https://example.com", changed_files=1)
+    try:
+        assert await forge.get_repository_file(pr, "AGENTS.md") == "Use caution"
+        assert await forge.get_repository_file(pr, "missing.md") is None
+    finally:
+        await client.aclose()
+    assert requested[0].url.params["ref"] == "b" * 40
 
 
 @pytest.mark.asyncio

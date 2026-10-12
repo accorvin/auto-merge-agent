@@ -96,7 +96,19 @@ class PolicyConfig(StrictModel):
     merge: MergeConfig = Field(default_factory=MergeConfig)
     human_review: HumanReviewConfig = Field(default_factory=HumanReviewConfig)
     profiles: list[str] = Field(default_factory=list)
+    llm_context_files: list[str] = Field(default_factory=list)
     rules: list[RuleConfig] = Field(default_factory=list)
+
+    @field_validator("llm_context_files")
+    @classmethod
+    def validate_llm_context_files(cls, paths: list[str]) -> list[str]:
+        if len(paths) != len(set(paths)):
+            raise ValueError("llm_context_files must not contain duplicates")
+        for path in paths:
+            if (not path or path.startswith("/") or "\\" in path
+                    or any(part in ("", ".", "..") for part in path.split("/"))):
+                raise ValueError(f"Invalid llm_context_files path: {path!r}; use a relative repository path")
+        return paths
 
 
 class GlobalConfig(StrictModel):
@@ -155,6 +167,7 @@ class ConfigLayer(StrictModel):
     merge: MergeLayer | None = None
     human_review: HumanReviewLayer | None = None
     profiles: list[str] | None = None
+    llm_context_files: list[str] | None = None
     rules: list[RuleConfig] | None = None
 
 
@@ -254,3 +267,4 @@ class LoadedConfig(StrictModel):
     allowed_models: list[str]
     trusted_authors: list[str]
     revision: str
+    llm_context: str = ""
