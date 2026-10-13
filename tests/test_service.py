@@ -52,7 +52,7 @@ async def test_webhook_verifies_signature_and_queues_status_commit(tmp_path, mon
     (tmp_path / "config/global.yaml").write_text("schema_version: 1\nallowed_models: []\ndefaults: {}\n")
     repo_config = tmp_path / "configs/github.com/acme/repo/config.yaml"
     repo_config.parent.mkdir(parents=True)
-    repo_config.write_text("schema_version: 1\nenabled: true\nci: {expected: [{name: build}]}\n")
+    repo_config.write_text("schema_version: 1\nenabled: true\nci: {expected: [{name: build}]}\nrules: [{name: docs, type: changed_paths_only, paths: [README.md]}]\n")
     (repo_config.parent / "OWNERS").write_text("approvers: [alice]\nreviewers: [alice]\n")
     disabled_dir = tmp_path / "configs/github.com/acme/disabled"
     disabled_dir.mkdir(parents=True)
@@ -87,3 +87,46 @@ async def test_webhook_verifies_signature_and_queues_status_commit(tmp_path, mon
         assert ignored_disabled.status_code == 200
         assert ignored_disabled.json() == {"queued": 0}
     assert app.state.jobs.pending == {("commit", "acme", "repo", "a" * 40)}
+
+
+@pytest.mark.asyncio
+async def test_webhook_ignores_own_events_and_unrelated_pr_actions(tmp_path, monkeypatch):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/global.yaml").write_text("schema_version: 1\nallowed_models: []\ndefaults: {}\n")
+    repo_config = tmp_path / "configs/github.com/acme/repo/config.yaml"
+    repo_config.parent.mkdir(parents=True)
+    repo_config.write_text("schema_version: 1\nenabled: true\nci: {expected: [{name: build}]}\nrules: [{name: docs, type: changed_paths_only, paths: [README.md]}]\n")
+    (repo_config.parent / "OWNERS").write_text("approvers: [alice]\n")
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setenv("GITHUB_APP_ID", "123")
+    monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", "unused")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    app = create_app(tmp_path)
+    repository = {"owner": {"login": "acme"}, "name": "repo"}
+
+    async def deliver(client, event, payload):
+        body = json.dumps({"repository": repository, **payload}).encode()
+        signature = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
+        response = await client.post("/webhook", content=body, headers={"X-GitHub-Event": event, "X-Hub-Signature-256": signature})
+        assert response.status_code == 200
+        return response.json()
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        own_comment = {"action": "created", "issue": {"number": 12, "pull_request": {}},
+                       "sender": {"login": "real-app[bot]", "type": "Bot"},
+                       "comment": {"body": "<!-- auto-merge-agent decision -->\nReview needed"}}
+        assert await deliver(client, "issue_comment", own_comment) == {"queued": 0}
+        app.state.forge._remember_comment_author({"user": {"login": "real-app[bot]"}})
+        assert await deliver(client, "issue_comment", {"action": "created", "issue": {"number": 12, "pull_request": {}},
+                                                       "sender": {"login": "real-app[bot]"},
+                                                       "comment": {"body": "A later bot comment"}}) == {"queued": 0}
+        assert await deliver(client, "pull_request", {"action": "assigned", "number": 12}) == {"queued": 0}
+        assert await deliver(client, "check_run", {"action": "completed", "sender": {"login": "real-app[bot]"},
+                                                    "check_run": {"name": "automerge/policy", "app": {"id": 123},
+                                                                  "pull_requests": [{"number": 12}]}}) == {"queued": 0}
+        assert app.state.jobs.pending == set()
+        assert await deliver(client, "check_run", {"action": "completed", "sender": {"login": "ci[bot]"},
+                                                    "check_run": {"name": "build", "app": {"id": 456},
+                                                                  "pull_requests": [{"number": 12}]}}) == {"queued": 1}
+        assert app.state.jobs.pending == {("pr", "acme", "repo", 12)}

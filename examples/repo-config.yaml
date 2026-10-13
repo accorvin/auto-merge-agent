@@ -1,8 +1,6 @@
 schema_version: 1
 # Replace the check names and review contacts, then enable the repo.
 enabled: false
-profiles:
-  - go-dependencies
 ci:
   expected:
     - name: unit-tests
@@ -16,19 +14,20 @@ limits:
   exclude_from_line_count:
     - go.sum
 rules:
-  - id: low-risk-maintenance
-    type: changed_paths_only
-    paths:
-      - "*.go"
-      - README.md
-      - docs/**
-    statuses: [modified, added]
-    llm:
-      complexity:
+  - profile: go-dependencies
+  - name: low-risk-maintenance
+    all:
+      - name: maintenance-paths
+        type: changed_paths_only
+        paths: ["*.go", README.md, "docs/**"]
+        statuses: [modified, added]
+      - name: maintenance-complexity
+        type: llm_complexity
         model: gpt-6-sol
         max: low
         max_changed_lines: 100
-      custom:
+      - name: maintenance-safety
+        type: llm_custom
         model: gpt-6-sol
         max_changed_lines: 100
         prompt: >-

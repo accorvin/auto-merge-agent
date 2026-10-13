@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from .types import ConfigLayer, GlobalConfig, LoadedConfig, PolicyConfig, ProfileConfig, RuleConfig
+from .types import AllRulesConfig, ConfigLayer, GlobalConfig, LoadedConfig, PolicyConfig, ProfileConfig, ProfileEntry, ProfileRuleConfig
 from .plugins import load_plugin
 from .rules import rule_evaluator
 
@@ -73,30 +73,34 @@ class ConfigStore:
         except ValidationError as exc:
             raise ConfigError(f"Invalid effective config for {owner}/{repo}: {exc}") from exc
 
-        rules: list[RuleConfig] = []
-        for name in policy.profiles:
-            if not name or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in name):
-                raise ConfigError(f"Invalid profile name: {name!r}")
-            profile_path = self.root / "profiles" / f"{name}.yaml"
-            try:
-                rules.extend(ProfileConfig.model_validate(_read_yaml(profile_path)).rules)
-            except ValidationError as exc:
-                raise ConfigError(f"Invalid profile {profile_path}: {exc}") from exc
-        rules.extend(policy.rules)
-        if len({rule.id for rule in rules}) != len(rules):
-            raise ConfigError(f"Duplicate rule ID in {owner}/{repo}")
-        for rule in rules:
+        rules: list[ProfileEntry] = []
+        for entry in policy.rules:
+            if isinstance(entry, ProfileRuleConfig):
+                profile_path = self.root / "profiles" / f"{entry.profile}.yaml"
+                try:
+                    rules.extend(ProfileConfig.model_validate(_read_yaml(profile_path)).rules)
+                except ValidationError as exc:
+                    raise ConfigError(f"Invalid profile {profile_path}: {exc}") from exc
+            else:
+                rules.append(entry)
+        atomic_rules = [part for rule in rules for part in (rule.all if isinstance(rule, AllRulesConfig) else [rule])]
+        all_names = [rule.name for rule in rules] + [part.name for rule in rules if isinstance(rule, AllRulesConfig) for part in rule.all]
+        if len(set(all_names)) != len(all_names):
+            raise ConfigError(f"Duplicate rule name in {owner}/{repo}")
+        for rule in atomic_rules:
             try:
                 rule_evaluator(rule.type)
             except ValueError as exc:
                 raise ConfigError(str(exc)) from exc
-            if rule.type == "changed_paths_only" and (not rule.paths or rule.options):
-                raise ConfigError(f"Rule {rule.id}: changed_paths_only needs paths and no options")
-            for gate in (rule.llm.complexity, rule.llm.custom) if rule.llm else ():
-                if gate and gate.model not in global_config.allowed_models:
-                    raise ConfigError(f"Rule {rule.id}: model {gate.model!r} is not allowlisted")
+            if rule.model and rule.model not in global_config.allowed_models:
+                raise ConfigError(f"Rule {rule.name}: model {rule.model!r} is not allowlisted")
         if policy.enabled and not policy.ci.expected:
             raise ConfigError(f"Enabled repo {owner}/{repo} requires expected CI checks")
+        if policy.enabled and not rules:
+            raise ConfigError(f"Enabled repo {owner}/{repo} requires at least one eligibility rule")
+        for expected in policy.ci.expected:
+            if any(expected.name == ignored.name and (ignored.source is None or ignored.source == expected.source) for ignored in policy.ci.ignore):
+                raise ConfigError(f"Expected CI check {expected.name!r} is also ignored in {owner}/{repo}")
         if policy.trusted_authors is None:
             owners_path = paths[1].parent / "OWNERS"
             approvers = _read_yaml(owners_path).get("approvers")

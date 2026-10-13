@@ -30,14 +30,31 @@ def _markdown_text(value: str) -> str:
 class GitHubForge:
     def __init__(
         self, app_id: str | None = None, private_key: str | None = None,
-        token: str | None = None, bot_login: str = "auto-merge-agent[bot]",
+        token: str | None = None,
         api_url: str = "https://api.github.com", client: httpx.AsyncClient | None = None,
     ):
-        self.app_id, self.private_key, self.token, self.bot_login = app_id, private_key, token, bot_login
+        self.app_id, self.private_key, self.token = app_id, private_key, token
+        self.bot_login: str | None = None
         self.api_url = api_url.rstrip("/")
         self.client = client or httpx.AsyncClient(timeout=30)
         self._installation_tokens: dict[int, tuple[str, float]] = {}
         self._installations: dict[str, int] = {}
+
+    def _own_comment(self, item: dict, marker: str) -> bool:
+        if marker not in (item.get("body") or ""):
+            return False
+        author = item.get("user") or {}
+        app = item.get("performed_via_github_app") or {}
+        return (
+            (self.bot_login is not None and author.get("login") == self.bot_login)
+            or (self.app_id is not None and str(app.get("id")) == str(self.app_id))
+            or (self.bot_login is None and author.get("type") == "Bot")
+        )
+
+    def _remember_comment_author(self, comment: dict) -> None:
+        login = (comment.get("user") or {}).get("login")
+        if isinstance(login, str) and login:
+            self.bot_login = login
 
     @classmethod
     def from_env(cls) -> GitHubForge:
@@ -50,7 +67,6 @@ class GitHubForge:
         return cls(
             app_id=os.getenv("GITHUB_APP_ID"), private_key=key,
             token=os.getenv("GITHUB_TOKEN"),
-            bot_login=os.getenv("GITHUB_BOT_LOGIN", "auto-merge-agent[bot]"),
             api_url=os.getenv("GITHUB_API_URL", "https://api.github.com"),
         )
 
@@ -237,20 +253,29 @@ class GitHubForge:
             payload["conclusion"] = conclusion
             payload["completed_at"] = datetime.now(timezone.utc).isoformat()
         runs = await self._call(ref, "GET", f"/repos/{ref.slug}/commits/{pr.head_sha}/check-runs", params={"check_name": "automerge/policy", "per_page": 100})
-        existing = next((run for run in runs["check_runs"] if run.get("external_id") == payload["external_id"] and (run.get("app") or {}).get("slug") == self.bot_login.removesuffix("[bot]")), None)
+        existing = next((run for run in runs["check_runs"] if run.get("external_id") == payload["external_id"] and (
+            (self.app_id is not None and str((run.get("app") or {}).get("id")) == str(self.app_id))
+            or (self.bot_login is not None and (run.get("app") or {}).get("slug") == self.bot_login.removesuffix("[bot]"))
+        )), None)
         if existing and existing.get("status") == "completed" and existing.get("conclusion") != conclusion:
             existing = None
         if existing:
             payload.pop("name")
             payload.pop("head_sha")
-            await self._call(ref, "PATCH", f"/repos/{ref.slug}/check-runs/{existing['id']}", json_data=payload)
+            output = existing.get("output") or {}
+            if (existing.get("status"), existing.get("conclusion"), output.get("title"), output.get("summary")) != (
+                payload["status"], payload.get("conclusion"), payload["output"]["title"], payload["output"]["summary"]
+            ):
+                await self._call(ref, "PATCH", f"/repos/{ref.slug}/check-runs/{existing['id']}", json_data=payload)
         else:
             await self._call(ref, "POST", f"/repos/{ref.slug}/check-runs", json_data=payload)
         if not comment:
             return
         marker = "<!-- auto-merge-agent decision -->"
         old = await self._pages(ref, f"/repos/{ref.slug}/issues/{ref.number}/comments")
-        previous = next((item for item in old if (item.get("user") or {}).get("login") == self.bot_login and marker in (item.get("body") or "")), None)
+        previous = next((item for item in old if self._own_comment(item, marker)), None)
+        if previous:
+            self._remember_comment_author(previous)
         if decision.state == "waiting" and previous is None:
             return
         mentions = " ".join(value for value in mention if re.fullmatch(r"@[A-Za-z0-9-]+(?:/[A-Za-z0-9_.-]+)?", value))
@@ -261,7 +286,8 @@ class GitHubForge:
             if previous["body"] != body:
                 await self._call(ref, "PATCH", f"/repos/{ref.slug}/issues/comments/{previous['id']}", json_data={"body": body})
         elif decision.state == "human_review":
-            await self._call(ref, "POST", f"/repos/{ref.slug}/issues/{ref.number}/comments", json_data={"body": body})
+            created = await self._call(ref, "POST", f"/repos/{ref.slug}/issues/{ref.number}/comments", json_data={"body": body})
+            self._remember_comment_author(created)
 
     async def publish_merge_checklist(self, pr: PullRequestSnapshot, decision: Decision, outcome: str) -> None:
         if decision.state != "eligible" or not decision.passed_checks:
@@ -283,12 +309,15 @@ class GitHubForge:
             f"(policy `{decision.config_revision}`).\n\n" + "\n".join(checklist)
         )
         comments = await self._pages(ref, f"/repos/{ref.slug}/issues/{ref.number}/comments")
-        previous = next((item for item in comments if (item.get("user") or {}).get("login") == self.bot_login and marker in (item.get("body") or "")), None)
+        previous = next((item for item in comments if self._own_comment(item, marker)), None)
+        if previous:
+            self._remember_comment_author(previous)
         if previous:
             if previous["body"] != body:
                 await self._call(ref, "PATCH", f"/repos/{ref.slug}/issues/comments/{previous['id']}", json_data={"body": body})
         else:
-            await self._call(ref, "POST", f"/repos/{ref.slug}/issues/{ref.number}/comments", json_data={"body": body})
+            created = await self._call(ref, "POST", f"/repos/{ref.slug}/issues/{ref.number}/comments", json_data={"body": body})
+            self._remember_comment_author(created)
 
     async def merge(self, pr: PullRequestSnapshot, method: str) -> bool:
         ref = pr.ref

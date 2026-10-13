@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -52,30 +52,63 @@ class LimitsConfig(StrictModel):
     exclude_from_line_count: list[str] = Field(default_factory=list)
 
 
-class LLMComplexity(StrictModel):
-    max: Literal["low", "medium", "high"]
-    model: str
-    max_changed_lines: int | None = Field(default=None, ge=0)
-
-
-class LLMCustom(StrictModel):
-    model: str
-    prompt: str = Field(min_length=1)
-    max_changed_lines: int | None = Field(default=None, ge=0)
-
-
-class LLMGates(StrictModel):
-    complexity: LLMComplexity | None = None
-    custom: LLMCustom | None = None
-
-
 class RuleConfig(StrictModel):
-    id: str
+    name: str = Field(min_length=1)
     type: str
     paths: list[str] = Field(default_factory=list)
     statuses: list[Literal["modified", "added", "removed", "renamed", "copied", "changed", "unchanged"]] | None = None
-    llm: LLMGates | None = None
+    model: str | None = None
+    max: Literal["low", "medium", "high"] | None = None
+    prompt: str | None = None
+    max_changed_lines: int | None = Field(default=None, ge=0)
     options: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_builtin(self) -> RuleConfig:
+        if any(not path for path in self.paths):
+            raise ValueError(f"Rule {self.name}: paths must not contain empty patterns")
+        if self.statuses == []:
+            raise ValueError(f"Rule {self.name}: statuses must not be empty")
+        if self.statuses is not None and not self.paths:
+            raise ValueError(f"Rule {self.name}: statuses requires paths")
+        if self.type == "changed_paths_only":
+            if not self.paths or self.options or any(value is not None for value in (self.model, self.max, self.prompt, self.max_changed_lines)):
+                raise ValueError(f"Rule {self.name}: changed_paths_only requires paths and no LLM fields or options")
+        elif self.type in ("llm_complexity", "llm_custom"):
+            required = self.max if self.type == "llm_complexity" else self.prompt
+            unexpected = self.prompt if self.type == "llm_complexity" else self.max
+            if not self.model or not required or (isinstance(required, str) and not required.strip()) or unexpected is not None or self.options:
+                raise ValueError(f"Rule {self.name}: {self.type} requires model and its own criterion, with no other criterion or options")
+        elif any(value is not None for value in (self.model, self.max, self.prompt, self.max_changed_lines)):
+            raise ValueError(f"Rule {self.name}: LLM fields require an LLM rule type")
+        return self
+
+
+class AllRulesConfig(StrictModel):
+    name: str = Field(min_length=1)
+    all: list[RuleConfig] = Field(min_length=2)
+
+
+class ProfileRuleConfig(StrictModel):
+    profile: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+
+
+def _rule_kind(value: Any) -> str:
+    if isinstance(value, ProfileRuleConfig) or (isinstance(value, dict) and "profile" in value):
+        return "profile"
+    return "all" if isinstance(value, AllRulesConfig) or (isinstance(value, dict) and "all" in value) else "atomic"
+
+
+ProfileEntry = Annotated[
+    Annotated[RuleConfig, Tag("atomic")] | Annotated[AllRulesConfig, Tag("all")],
+    Discriminator(_rule_kind),
+]
+
+
+EligibilityRule = Annotated[
+    Annotated[RuleConfig, Tag("atomic")] | Annotated[AllRulesConfig, Tag("all")] | Annotated[ProfileRuleConfig, Tag("profile")],
+    Discriminator(_rule_kind),
+]
 
 
 class MergeConfig(StrictModel):
@@ -95,9 +128,8 @@ class PolicyConfig(StrictModel):
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     merge: MergeConfig = Field(default_factory=MergeConfig)
     human_review: HumanReviewConfig = Field(default_factory=HumanReviewConfig)
-    profiles: list[str] = Field(default_factory=list)
     llm_context_files: list[str] = Field(default_factory=list)
-    rules: list[RuleConfig] = Field(default_factory=list)
+    rules: list[EligibilityRule] = Field(default_factory=list)
 
     @field_validator("llm_context_files")
     @classmethod
@@ -166,14 +198,13 @@ class ConfigLayer(StrictModel):
     limits: LimitsLayer | None = None
     merge: MergeLayer | None = None
     human_review: HumanReviewLayer | None = None
-    profiles: list[str] | None = None
     llm_context_files: list[str] | None = None
-    rules: list[RuleConfig] | None = None
+    rules: list[EligibilityRule] | None = None
 
 
 class ProfileConfig(StrictModel):
     schema_version: Literal[1]
-    rules: list[RuleConfig]
+    rules: list[ProfileEntry] = Field(min_length=1)
 
 
 class PullRequestRef(StrictModel):

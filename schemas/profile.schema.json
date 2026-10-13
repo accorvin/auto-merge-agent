@@ -1,121 +1,78 @@
 {
   "$defs": {
-    "LLMComplexity": {
+    "AllRulesConfig": {
       "additionalProperties": false,
       "properties": {
-        "max": {
-          "enum": [
-            "low",
-            "medium",
-            "high"
-          ],
-          "title": "Max",
-          "type": "string"
+        "all": {
+          "items": {
+            "$ref": "#/$defs/RuleConfig"
+          },
+          "minItems": 2,
+          "title": "All",
+          "type": "array"
         },
-        "max_changed_lines": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Max Changed Lines"
-        },
-        "model": {
-          "title": "Model",
-          "type": "string"
-        }
-      },
-      "required": [
-        "max",
-        "model"
-      ],
-      "title": "LLMComplexity",
-      "type": "object"
-    },
-    "LLMCustom": {
-      "additionalProperties": false,
-      "properties": {
-        "max_changed_lines": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Max Changed Lines"
-        },
-        "model": {
-          "title": "Model",
-          "type": "string"
-        },
-        "prompt": {
+        "name": {
           "minLength": 1,
-          "title": "Prompt",
+          "title": "Name",
           "type": "string"
         }
       },
       "required": [
-        "model",
-        "prompt"
+        "name",
+        "all"
       ],
-      "title": "LLMCustom",
-      "type": "object"
-    },
-    "LLMGates": {
-      "additionalProperties": false,
-      "properties": {
-        "complexity": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LLMComplexity"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "custom": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LLMCustom"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "title": "LLMGates",
+      "title": "AllRulesConfig",
       "type": "object"
     },
     "RuleConfig": {
       "additionalProperties": false,
       "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "llm": {
+        "max": {
           "anyOf": [
             {
-              "$ref": "#/$defs/LLMGates"
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "title": "Max"
+        },
+        "max_changed_lines": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Changed Lines"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
         },
         "options": {
           "additionalProperties": true,
@@ -128,6 +85,18 @@
           },
           "title": "Paths",
           "type": "array"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt"
         },
         "statuses": {
           "anyOf": [
@@ -159,7 +128,7 @@
         }
       },
       "required": [
-        "id",
+        "name",
         "type"
       ],
       "title": "RuleConfig",
@@ -171,8 +140,16 @@
   "properties": {
     "rules": {
       "items": {
-        "$ref": "#/$defs/RuleConfig"
+        "oneOf": [
+          {
+            "$ref": "#/$defs/RuleConfig"
+          },
+          {
+            "$ref": "#/$defs/AllRulesConfig"
+          }
+        ]
       },
+      "minItems": 1,
       "title": "Rules",
       "type": "array"
     },

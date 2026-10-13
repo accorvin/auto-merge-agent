@@ -10,8 +10,8 @@ from .llm import LangChainJudge
 from .plugins import ForgePlugin, ReviewerPlugin, load_plugin
 from .rules import path_matches, rule_evaluator
 from .types import (
-    ChangedFile, Check, CheckSelector, Decision, LoadedConfig, PullRequestRef, PullRequestSnapshot,
-    RISK_ORDER, SEVERITY_ORDER, ReviewArtifact, RuleConfig,
+    AllRulesConfig, ChangedFile, Check, CheckSelector, Decision, EligibilityRule, LoadedConfig,
+    PullRequestRef, PullRequestSnapshot, RISK_ORDER, SEVERITY_ORDER, ReviewArtifact, RuleConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class EvaluationState(TypedDict, total=False):
     files: list
     checks: list[Check]
     artifacts: list[ReviewArtifact]
-    candidates: list[RuleConfig]
+    candidates: list[EligibilityRule]
     passed_checks: list[str]
     decision: Decision
 
@@ -46,6 +46,14 @@ def _counted_lines(files: list[ChangedFile], excluded_paths: list[str]) -> int:
         file.additions + file.deletions for file in files
         if not any(path_matches(file.path, pattern) for pattern in excluded_paths)
     )
+
+
+def _parts(rule: EligibilityRule) -> list[RuleConfig]:
+    return rule.all if isinstance(rule, AllRulesConfig) else [rule]
+
+
+def _uses_llm(rule: EligibilityRule) -> bool:
+    return any(part.type in ("llm_complexity", "llm_custom") for part in _parts(rule))
 
 
 def _ci_decision(checks: list[Check], config: LoadedConfig) -> tuple[str, str]:
@@ -154,12 +162,15 @@ class EvaluationEngine:
             f"{reviewer_name} reviewed current HEAD {pr.head_sha[:12]}; "
             f"merge risk {assessment.merge_risk.value} <= {config.policy.review.max_merge_risk.value}; {finding_summary}"
         )
-        matching = [rule for rule in config.policy.rules if rule_evaluator(rule.type).evaluate(rule, files).state == "pass"]
+        matching = [
+            rule for rule in config.policy.rules
+            if all(rule_evaluator(part.type).evaluate(part, files).state == "pass" for part in _parts(rule))
+        ]
         if not matching:
             return result("human_review", "No eligibility rule matched")
-        no_llm = next((rule for rule in matching if rule.llm is None), None)
+        no_llm = next((rule for rule in matching if not _uses_llm(rule)), None)
         if no_llm:
-            return result("eligible", f"Rule {no_llm.id} matched", no_llm.id, passed + [f"Static eligibility rule {no_llm.id} matched"])
+            return result("eligible", f"Rule {no_llm.name} matched", no_llm.name, passed + [f"Static eligibility rule {no_llm.name} matched"])
         return {"candidates": matching, "passed_checks": passed}
 
     async def _llm(self, state: EvaluationState) -> dict[str, Any]:
@@ -170,17 +181,18 @@ class EvaluationEngine:
         cap_checks: dict[str, list[str]] = {}
         for rule in state["candidates"]:
             passed_caps = []
-            for section_name in ("complexity", "custom"):
-                section = getattr(rule.llm, section_name)
-                cap = section.max_changed_lines if section else None
+            for part in _parts(rule):
+                if part.type not in ("llm_complexity", "llm_custom"):
+                    continue
+                cap = part.max_changed_lines
                 if cap is not None and counted > cap:
-                    reasons.append(f"Rule {rule.id}: {section_name} LLM limit {cap} exceeded by {counted} changed lines")
+                    reasons.append(f"Rule {part.name}: {part.type} limit {cap} exceeded by {counted} changed lines")
                     break
                 if cap is not None:
-                    passed_caps.append(f"{section_name} LLM changed lines: {counted} <= {cap}")
+                    passed_caps.append(f"{part.type} changed lines: {counted} <= {cap}")
             else:
                 candidates.append(rule)
-                cap_checks[rule.id] = passed_caps
+                cap_checks[rule.name] = passed_caps
         if not candidates:
             return {"decision": Decision(state="human_review", head_sha=pr.head_sha, reasons=reasons, config_revision=config.revision)}
         if self.judge is None:
@@ -206,16 +218,19 @@ class EvaluationEngine:
             return {"decision": Decision(state="waiting", head_sha=pr.head_sha, reasons=reasons + [f"LLM context unavailable: {type(exc).__name__}"], config_revision=config.revision)}
         waiting = False
         for rule in candidates:
-            verdict = await self.judge.evaluate(rule.llm, state["files"], pr.title, pr.body, context)
-            if verdict.state == "pass":
-                llm_checks = verdict.passed_checks or [
-                    f"LLM {name} criterion passed ({getattr(rule.llm, name).model})"
-                    for name in ("complexity", "custom") if getattr(rule.llm, name)
-                ]
-                checklist = state["passed_checks"] + cap_checks[rule.id] + llm_checks + [f"Eligibility rule {rule.id} matched"]
-                return {"decision": Decision(state="eligible", head_sha=pr.head_sha, reasons=[f"Rule {rule.id} and LLM gates passed"], matched_rule=rule.id, config_revision=config.revision, passed_checks=checklist)}
-            reasons.append(f"Rule {rule.id}: {verdict.reason}")
-            waiting |= verdict.state == "wait"
+            llm_checks = []
+            for part in _parts(rule):
+                if part.type not in ("llm_complexity", "llm_custom"):
+                    continue
+                verdict = await self.judge.evaluate(part, state["files"], pr.title, pr.body, context)
+                if verdict.state != "pass":
+                    reasons.append(f"Rule {part.name}: {verdict.reason}")
+                    waiting |= verdict.state == "wait"
+                    break
+                llm_checks.extend(verdict.passed_checks or [f"LLM criterion {part.name} passed ({part.model})"])
+            else:
+                checklist = state["passed_checks"] + cap_checks[rule.name] + llm_checks + [f"Eligibility rule {rule.name} matched"]
+                return {"decision": Decision(state="eligible", head_sha=pr.head_sha, reasons=[f"Rule {rule.name} passed"], matched_rule=rule.name, config_revision=config.revision, passed_checks=checklist)}
         return {"decision": Decision(state="waiting" if waiting else "human_review", head_sha=pr.head_sha, reasons=reasons, config_revision=config.revision)}
 
     async def evaluate(self, ref: PullRequestRef) -> tuple[PullRequestSnapshot, Decision]:

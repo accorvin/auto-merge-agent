@@ -33,9 +33,9 @@ async def test_allowed_model_id_uses_exact_api_model_without_temperature(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_passed_llm_sections_supply_checklist_entries(monkeypatch):
+async def test_each_llm_rule_supplies_its_own_checklist_entry(monkeypatch):
     config = ConfigStore(Path(__file__).resolve().parents[1]).load("github.com", "mprahl", "test-automerge")
-    gates = next(rule.llm for rule in config.policy.rules if rule.id == "low-risk-maintenance")
+    rules = next(rule.all for rule in config.policy.rules if rule.name == "low-risk-maintenance")
     judge = LangChainJudge(config.allowed_models)
 
     async def answer(model, schema, system, user):
@@ -44,21 +44,18 @@ async def test_passed_llm_sections_supply_checklist_entries(monkeypatch):
         return SafetyAnswer(safe_to_merge=True, reason="No interface change")
 
     monkeypatch.setattr(judge, "_ask", answer)
-    verdict = await judge.evaluate(
-        gates,
-        [ChangedFile(path="main.go", status="modified", additions=1, deletions=1, patch="@@ -1 +1 @@\n-old\n+new")],
-        "Small fix", "",
-    )
-    assert verdict.state == "pass"
-    assert len(verdict.passed_checks) == 2
-    assert "complexity: low <= low" in verdict.passed_checks[0]
-    assert "safe_to_merge=true" in verdict.passed_checks[1]
+    files = [ChangedFile(path="main.go", status="modified", additions=1, deletions=1, patch="@@ -1 +1 @@\n-old\n+new")]
+    complexity = await judge.evaluate(rules[1], files, "Small fix", "")
+    safety = await judge.evaluate(rules[2], files, "Small fix", "")
+    assert complexity.state == safety.state == "pass"
+    assert "complexity: low <= low" in complexity.passed_checks[0]
+    assert "safe_to_merge=true" in safety.passed_checks[0]
 
 
 @pytest.mark.asyncio
 async def test_repository_context_reaches_both_model_calls(monkeypatch):
     config = ConfigStore(Path(__file__).resolve().parents[1]).load("github.com", "mprahl", "test-automerge")
-    gates = next(rule.llm for rule in config.policy.rules if rule.id == "low-risk-maintenance")
+    rules = next(rule.all for rule in config.policy.rules if rule.name == "low-risk-maintenance")
     judge = LangChainJudge(config.allowed_models)
     calls = []
 
@@ -69,10 +66,11 @@ async def test_repository_context_reaches_both_model_calls(monkeypatch):
         return SafetyAnswer(safe_to_merge=True, reason="Safe")
 
     monkeypatch.setattr(judge, "_ask", answer)
-    verdict = await judge.evaluate(
-        gates, [ChangedFile(path="main.go", status="modified", additions=1, deletions=1, patch="diff")],
-        "Fix", "", {"repository/AGENTS.md": "Check API compatibility"},
-    )
-    assert verdict.state == "pass"
+    for rule in rules[1:]:
+        verdict = await judge.evaluate(
+            rule, [ChangedFile(path="main.go", status="modified", additions=1, deletions=1, patch="diff")],
+            "Fix", "", {"repository/AGENTS.md": "Check API compatibility"},
+        )
+        assert verdict.state == "pass"
     assert [schema for schema, _ in calls] == [ComplexityAnswer, SafetyAnswer]
     assert all("Check API compatibility" in user for _, user in calls)

@@ -140,3 +140,61 @@ async def test_merge_checklist_is_one_comment_updated_after_merge():
     assert methods.count("PATCH") == 1
     assert "- [x] CI lint passed" in comments[0]["body"]
     assert "Auto-merged after these checks passed" in comments[0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_decision_discovers_bot_login_and_reuses_app_output():
+    head = "a" * 40
+    comments = []
+    runs = []
+    writes = []
+
+    def handler(request):
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/check-runs"):
+            return httpx.Response(200, json={"check_runs": runs})
+        if request.method == "GET" and path.endswith("/comments"):
+            return httpx.Response(200, json=comments)
+        data = json.loads(request.content)
+        writes.append((request.method, path))
+        if "/check-runs" in path:
+            if request.method == "POST":
+                runs.append({**data, "id": len(runs) + 1, "app": {"id": 123, "slug": "real-app"}})
+            else:
+                runs[0].update(data)
+            return httpx.Response(200, json=runs[-1])
+        if request.method == "POST":
+            comments.append({"id": 7, "body": data["body"], "user": {"login": "real-app[bot]", "type": "Bot"}})
+        else:
+            comments[0]["body"] = data["body"]
+        return httpx.Response(200, json=comments[0])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    forge = GitHubForge(app_id="123", token="test", client=client)
+    ref = PullRequestRef(owner="acme", repo="repo", number=12)
+    pr = PullRequestSnapshot(ref=ref, head_sha=head, base_sha="b" * 40,
+                             state="open", draft=False, title="Test", url="https://example.com", changed_files=1)
+    decision = Decision(state="human_review", head_sha=head, reasons=["CI failed"], config_revision="abc123")
+    try:
+        assert forge.bot_login is None
+        await forge.publish_decision(pr, decision, [], True)
+        assert forge.bot_login == "real-app[bot]"
+        assert len(writes) == 2
+        await forge.publish_decision(pr, decision, [], True)
+        assert len(writes) == 2
+        changed = decision.model_copy(update={"reasons": ["CI passed; review needed"]})
+        await forge.publish_decision(pr, changed, [], True)
+        assert writes[-2][0] == "PATCH"
+        assert writes[-1][0] == "PATCH"
+        assert len(comments) == len(runs) == 1
+        new_head = "c" * 40
+        await forge.publish_decision(
+            pr.model_copy(update={"head_sha": new_head}),
+            changed.model_copy(update={"head_sha": new_head}), [], True,
+        )
+        assert writes[-2][0] == "POST"
+        assert writes[-1][0] == "PATCH"
+        assert len(comments) == 1
+        assert len(runs) == 2
+    finally:
+        await client.aclose()

@@ -25,7 +25,7 @@ The graph in [`engine.py`](../src/auto_merge_agent/engine.py) has `fetch`, `stat
 4. A completed CodeRabbit assessment for the current head, with merge risk and finding severity within the configured thresholds.
 5. One matching static rule, followed by all of that rule's configured LLM sections.
 
-Rules are OR alternatives after the mandatory gates. Within a rule, complexity and custom LLM sections are both required when present. Section line caps run before model calls. An eligible result records a checklist of passed gates; rejected or waiting results carry reasons.
+Top-level rules are OR alternatives after the mandatory gates. An `all` group requires every separate rule inside it. LLM line caps run before model calls. An eligible result records a checklist of passed gates; rejected or waiting results carry reasons.
 
 Before merging, the service evaluates the PR again and verifies the head, base, and policy revision have not changed during its run. It posts the passed-check checklist, then calls GitHub's merge endpoint with the evaluated head SHA. A new head makes GitHub reject the request. The bot updates the checklist comment to show whether the merge succeeded or stopped. The `automerge/policy` check stays tied to the head SHA. See [GitHub's merge API](https://docs.github.com/en/rest/pulls/pulls).
 
@@ -37,7 +37,7 @@ GitHub Actions triggered by `pull_request` can attach checks to the test merge c
 | --- | --- | --- |
 | Forge | `ForgePlugin`, `auto_merge_agent.forges` entry points | `GitHubForge` fetches PRs, diffs, checks, reviews, comments, and merges. |
 | Reviewer | `ReviewerPlugin`, `auto_merge_agent.reviewers` entry points | `CodeRabbitReviewer` returns a normalized review state, risk, and findings. |
-| Eligibility rule | `RuleEvaluator`, `auto_merge_agent.rules` entry points | `changed_paths_only`; reusable rules live in `profiles/`. |
+| Eligibility rule | `RuleEvaluator`, `auto_merge_agent.rules` entry points | `changed_paths_only`; `rules` can reference reusable files in `profiles/`. |
 | LLM model | LangChain `init_chat_model` using an allowlisted model ID | OpenAI through `langchain-openai` for the checked-in policy. |
 
 The public types are in [`types.py`](../src/auto_merge_agent/types.py); plugin protocols and loading are in [`plugins.py`](../src/auto_merge_agent/plugins.py). The service selects the GitHub forge today. A GitLab adapter would also require event routing and config-host support; those pieces are not implemented.

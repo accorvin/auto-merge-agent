@@ -24,11 +24,22 @@ class ChangedPathsOnly:
             and any(path_matches(file.path, pattern) for pattern in rule.paths)
             for file in files
         ):
-            return GateResult(state="pass", reason=f"Rule {rule.id} matched")
-        return GateResult(state="reject", reason=f"Rule {rule.id} did not match changed paths")
+            return GateResult(state="pass", reason=f"Rule {rule.name} matched")
+        return GateResult(state="reject", reason=f"Rule {rule.name} did not match changed paths")
 
 
-BUILTIN_RULES: dict[str, type[RuleEvaluator]] = {"changed_paths_only": ChangedPathsOnly}
+class LLMRuleScope:
+    def evaluate(self, rule: RuleConfig, files: list[ChangedFile]) -> GateResult:
+        if not rule.paths or ChangedPathsOnly().evaluate(rule, files).state == "pass":
+            return GateResult(state="pass", reason=f"Rule {rule.name} matched")
+        return GateResult(state="reject", reason=f"Rule {rule.name} did not match changed paths")
+
+
+BUILTIN_RULES: dict[str, type[RuleEvaluator]] = {
+    "changed_paths_only": ChangedPathsOnly,
+    "llm_complexity": LLMRuleScope,
+    "llm_custom": LLMRuleScope,
+}
 
 
 def rule_evaluator(rule_type: str) -> RuleEvaluator:

@@ -179,6 +179,7 @@ def create_app(root: Path | None = None) -> FastAPI:
 
     app = FastAPI(lifespan=lifespan)
     app.state.jobs = queue
+    app.state.forge = forge
 
     @app.get("/health")
     async def health():
@@ -206,20 +207,40 @@ def create_app(root: Path | None = None) -> FastAPI:
         if not config.policy.enabled:
             return {"queued": 0}
         numbers: set[int] = set()
-        if x_github_event == "pull_request":
+        action = data.get("action")
+        sender = data.get("sender") or {}
+        own_sender = bool(forge.bot_login and sender.get("login") == forge.bot_login)
+        if x_github_event == "pull_request" and action in {
+            "opened", "reopened", "synchronize", "ready_for_review", "converted_to_draft",
+            "edited", "labeled", "unlabeled",
+        }:
             numbers.add(data.get("number"))
-        elif x_github_event in ("pull_request_review", "pull_request_review_comment"):
+        elif x_github_event == "pull_request_review" and action in {"submitted", "dismissed", "edited"}:
             numbers.add((data.get("pull_request") or {}).get("number"))
-        elif x_github_event == "issue_comment" and (data.get("issue") or {}).get("pull_request"):
-            if (data.get("sender") or {}).get("login") == forge.bot_login:
+        elif x_github_event == "pull_request_review_comment" and action in {"created", "edited", "deleted"}:
+            numbers.add((data.get("pull_request") or {}).get("number"))
+        elif x_github_event == "issue_comment" and action in {"created", "edited", "deleted"} and (data.get("issue") or {}).get("pull_request"):
+            comment = data.get("comment") or {}
+            app = comment.get("performed_via_github_app") or {}
+            own_comment = (
+                own_sender or
+                (forge.app_id is not None and str(app.get("id")) == str(forge.app_id)) or
+                ((sender.get("type") == "Bot" or (comment.get("user") or {}).get("type") == "Bot")
+                 and "<!-- auto-merge-agent " in (comment.get("body") or ""))
+            )
+            if own_comment:
                 return {"queued": 0}
             numbers.add((data.get("issue") or {}).get("number"))
-        elif x_github_event in ("check_run", "check_suite"):
-            if (data.get("sender") or {}).get("login") == forge.bot_login:
+        elif x_github_event in ("check_run", "check_suite") and action in {"created", "completed", "rerequested", "requested", "in_progress"}:
+            check = data.get(x_github_event) or {}
+            check_app = check.get("app") or {}
+            if own_sender or check.get("name") == "automerge/policy" or (forge.app_id is not None and str(check_app.get("id")) == str(forge.app_id)):
                 return {"queued": 0}
-            for pr in (data.get(x_github_event) or {}).get("pull_requests") or []:
+            for pr in check.get("pull_requests") or []:
                 numbers.add(pr.get("number"))
         elif x_github_event == "status" and isinstance(data.get("sha"), str):
+            if own_sender or data.get("context") == "automerge/policy":
+                return {"queued": 0}
             queue.enqueue_commit(owner, repo, data["sha"])
         for number in numbers:
             if isinstance(number, int) and number > 0:

@@ -11,7 +11,7 @@ This Python GitHub App combines static rules, CI, a current-head CodeRabbit revi
 The agent checks every PR in this order:
 
 1. **Mandatory gates:** The PR is open, ready, mergeable, and from a trusted author. Its file list is complete, its size is within the repo limit, and no blocking label or human change request is present. Configured CI checks pass, at least one real CI check succeeds, and CodeRabbit has reviewed the latest head SHA.
-2. **One eligibility rule:** Rules are alternatives. A static rule can allow a Go dependency bump without an LLM. Another rule can require both a complexity judgment and a custom safety judgment. If a static rule passes, the LLM is skipped.
+2. **One eligibility rule:** Top-level rules are alternatives. A static rule can allow a Go dependency bump without an LLM. An `all` group can require a path rule, a complexity rule, and a custom safety rule together. If a static rule passes, the LLM is skipped.
 3. **Final recheck:** Before merging, the agent reruns the policy and confirms the head and base have not changed. Missing evidence, an unrecognized review, or a model error prevents an automatic merge.
 
 In active mode, the bot shows its decision in an `automerge/policy` check:
@@ -43,6 +43,7 @@ Policies live in this agent's checkout:
 
 ```text
 config/global.yaml                         # Defaults and allowed model IDs
+profiles/<profile>.yaml                    # Reusable eligibility rules
 configs/github.com/<owner>/config.yaml     # Optional owner defaults
 configs/github.com/<owner>/<repo>/config.yaml
 configs/github.com/<owner>/<repo>/OWNERS   # Default trusted PR authors
@@ -52,7 +53,7 @@ OWNERS                                     # Ownership of this agent repo
 
 Repo settings override owner settings; nested maps merge and lists replace inherited lists. The service evaluates only repositories with an enabled, valid config.
 
-LLM rules automatically include the policy directory's `context.md` and the target repo's root `AGENTS.md` (or `CLAUDE.md` if `AGENTS.md` is absent). Set `llm_context_files: [docs/merge-policy.md]` in `config.yaml` for additional target-repo files. Target-repo context comes from the PR base commit. See [configuration](docs/configuration.md#rules-and-llm-gates) for details.
+LLM rules automatically include the policy directory's `context.md` and the target repo's root `AGENTS.md` (or `CLAUDE.md` if `AGENTS.md` is absent). Set `llm_context_files: [docs/merge-policy.md]` in `config.yaml` for additional target-repo files. Target-repo context comes from the PR base commit. See [configuration](docs/configuration.md#eligibility-rules) for details.
 
 ### Example: dependency bumps and small fixes
 
@@ -74,26 +75,26 @@ ci:
     - name: tests
       source: github-actions
 rules:
-  - id: go-dependencies
-    type: changed_paths_only
-    paths: [go.mod, go.sum]
-    statuses: [modified]
-  - id: small-maintenance
-    type: changed_paths_only
-    paths: ["*.go", go.mod, go.sum, README.md, "docs/**"]
-    llm:
-      complexity:
+  - profile: go-dependencies
+  - name: small-maintenance
+    all:
+      - name: maintenance-paths
+        type: changed_paths_only
+        paths: ["*.go", go.mod, go.sum, README.md, "docs/**"]
+      - name: maintenance-complexity
+        type: llm_complexity
         model: gpt-6-sol
         max: low
         max_changed_lines: 100
-      custom:
+      - name: maintenance-safety
+        type: llm_custom
         model: gpt-6-sol
         prompt: >-
           Require human review for public API changes, new services, or
           unclear security effects. If uncertain, return false.
 ```
 
-Replace `maintainer` and `tests` with the repository's GitHub login and CI check. Both rules require a trusted author, passing CI, and a current-head CodeRabbit review. If CodeRabbit also posts a status, that status must pass. A PR changing only `go.mod` and `go.sum` uses the static rule and skips the LLM, even though `small-maintenance` also matches. Other matching changes must pass both LLM criteria.
+Replace `maintainer` and `tests` with the repository's GitHub login and CI check. The `go-dependencies` profile expands to a static rule for modified `go.mod` and `go.sum` files. Both alternatives require a trusted author, passing CI, and a current-head CodeRabbit review. If CodeRabbit also posts a status, that status must pass. A PR changing only `go.mod` and `go.sum` uses the static rule and skips the LLM, even though `small-maintenance` also matches. Other matching changes must pass both LLM criteria.
 
 See [configuration](docs/configuration.md) for inheritance, every policy field, and decision semantics. The checked-in policy under `configs/` is another example.
 

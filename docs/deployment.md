@@ -27,7 +27,6 @@ Subscribe to `pull_request`, `pull_request_review`, `pull_request_review_comment
 | `GITHUB_APP_ID` | Yes | Numeric App ID from its GitHub settings. |
 | `GITHUB_APP_PRIVATE_KEY_FILE` or `GITHUB_APP_PRIVATE_KEY` | Yes | PEM private key path or contents. Keep outside Git. |
 | `GITHUB_WEBHOOK_SECRET` | Yes for webhooks | Must match the App's webhook secret. |
-| `GITHUB_BOT_LOGIN` | Recommended | App bot login, usually `<app-slug>[bot]`, used to update its own comments and ignore its events. |
 | `AUTOMERGE_CONFIG_ROOT` | Recommended | Protected checkout containing `config/`, `configs/`, and `profiles/`; defaults to the working directory. |
 | `AUTOMERGE_ACTIVE` | No | `false` by default. Set `true` to publish checks/comments and merge eligible PRs. |
 | `OPENAI_API_KEY` | For OpenAI LLM rules | OpenAI Platform project API key. Static-only rules do not use it. |
@@ -38,6 +37,8 @@ The config checkout is the repository allowlist. After signature verification, t
 
 The service refuses to start if `GITHUB_TOKEN` is set; it must authenticate as the App installation. The read-only CLI may use `GITHUB_TOKEN`. Provide credentials through your deployment's secret store and never commit them.
 
+The service learns its bot login from the first comment it creates or finds and shares it across webhook handling and later comment updates. Before then, it identifies its own events by App ID and comment marker.
+
 ```bash
 cd /path/to/auto-merge-agent
 uv sync --locked
@@ -45,7 +46,6 @@ unset GITHUB_TOKEN
 export GITHUB_APP_ID=APP_ID
 export GITHUB_APP_PRIVATE_KEY_FILE=/path/to/app-private-key.pem
 export GITHUB_WEBHOOK_SECRET=WEBHOOK_SECRET
-export GITHUB_BOT_LOGIN='APP_SLUG[bot]'
 export AUTOMERGE_CONFIG_ROOT="$PWD"
 uv run auto-merge-agent serve --host 0.0.0.0 --port 8000
 ```

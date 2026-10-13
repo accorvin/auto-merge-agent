@@ -86,7 +86,7 @@ async def test_small_go_fix_uses_llm():
     _, result = await engine.evaluate(REF)
     assert result.state == "eligible"
     assert result.matched_rule == "low-risk-maintenance"
-    assert judge.calls == 1
+    assert judge.calls == 2
 
 
 @pytest.mark.asyncio
@@ -95,7 +95,7 @@ async def test_large_server_change_stops_before_llm():
     engine = EvaluationEngine(ConfigStore(ROOT), DemoForge([file("main.go", 101, 0)]), DemoReviewer(), judge)
     _, result = await engine.evaluate(REF)
     assert result.state == "human_review"
-    assert "complexity LLM limit 100 exceeded" in result.reasons[0]
+    assert "llm_complexity limit 100 exceeded" in result.reasons[0]
     assert judge.calls == 0
 
 
@@ -106,6 +106,22 @@ async def test_small_server_change_can_be_rejected_by_llm():
     _, result = await engine.evaluate(REF)
     assert result.state == "human_review"
     assert judge.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_all_group_requires_custom_rule_after_complexity_passes():
+    class RejectSafety(DemoJudge):
+        async def evaluate(self, rule, files, title, body, context):
+            self.calls += 1
+            return GateResult(state="reject" if rule.type == "llm_custom" else "pass", reason="Unsafe interface change")
+
+    judge = RejectSafety()
+    engine = EvaluationEngine(ConfigStore(ROOT), DemoForge([file("main.go")]), DemoReviewer(), judge)
+    _, result = await engine.evaluate(REF)
+    assert result.state == "human_review"
+    assert result.matched_rule is None
+    assert "maintenance-safety" in result.reasons[0]
+    assert judge.calls == 2
 
 
 @pytest.mark.asyncio
@@ -140,11 +156,11 @@ async def test_llm_cap_uses_shared_generated_file_exclusion():
     )
     _, result = await engine.evaluate(REF)
     assert result.state == "eligible"
-    assert judge.calls == 1
+    assert judge.calls == 2
 
 
 @pytest.mark.asyncio
-async def test_custom_llm_section_has_independent_cap(tmp_path):
+async def test_custom_llm_rule_has_independent_cap(tmp_path):
     (tmp_path / "config").mkdir()
     (tmp_path / "config/global.yaml").write_text((ROOT / "config/global.yaml").read_text())
     repo_dir = tmp_path / "configs/github.com/mprahl/test-automerge"
@@ -154,17 +170,18 @@ async def test_custom_llm_section_has_independent_cap(tmp_path):
 enabled: true
 ci: {expected: [{name: lint, source: github-actions}], ignore: [{name: CodeRabbit}]}
 rules:
-  - id: custom-cap
-    type: changed_paths_only
+  - name: custom-cap
+    type: llm_custom
     paths: ["*.go"]
-    llm:
-      custom: {model: gpt-6-sol, prompt: "Is this low risk?", max_changed_lines: 5}
+    model: gpt-6-sol
+    prompt: "Is this low risk?"
+    max_changed_lines: 5
 """)
     judge = DemoJudge()
     engine = EvaluationEngine(ConfigStore(tmp_path), DemoForge([file("main.go", 6, 0)]), DemoReviewer(), judge)
     _, result = await engine.evaluate(REF)
     assert result.state == "human_review"
-    assert "custom LLM limit 5 exceeded" in result.reasons[0]
+    assert "llm_custom limit 5 exceeded" in result.reasons[0]
     assert judge.calls == 0
 
 

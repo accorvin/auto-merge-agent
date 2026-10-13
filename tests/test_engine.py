@@ -25,7 +25,7 @@ defaults:
 enabled: true
 ci: {expected: [{name: build}]}
 rules:
-  - {id: go, type: changed_paths_only, paths: [go.mod, go.sum]}
+  - {name: go, type: changed_paths_only, paths: [go.mod, go.sum]}
 """)
     return ConfigStore(tmp_path)
 

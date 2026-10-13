@@ -17,26 +17,26 @@ limits:
   max_changed_lines: 200
   exclude_from_line_count:
     - go.sum
-profiles:
-  - go-dependencies
 rules:
-  - id: low-risk-maintenance
-    type: changed_paths_only
-    paths:
-      - "*.go"
-      - go.mod
-      - go.sum
-      - README.md
-      - docs/**
-    statuses:
-      - modified
-      - added
-    llm:
-      complexity:
+  - profile: go-dependencies
+  - name: low-risk-maintenance
+    all:
+      - name: maintenance-paths
+        type: changed_paths_only
+        paths:
+          - "*.go"
+          - go.mod
+          - go.sum
+          - README.md
+          - docs/**
+        statuses: [modified, added]
+      - name: maintenance-complexity
+        type: llm_complexity
         max: low
         model: gpt-6-sol
         max_changed_lines: 100
-      custom:
+      - name: maintenance-safety
+        type: llm_custom
         model: gpt-6-sol
         max_changed_lines: 100
         prompt: >-

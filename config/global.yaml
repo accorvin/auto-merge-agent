@@ -20,5 +20,4 @@ defaults:
   human_review:
     comment: true
     mention: []
-  profiles: []
   rules: []

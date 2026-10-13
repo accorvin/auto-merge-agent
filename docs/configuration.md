@@ -14,11 +14,11 @@ configs/github.com/<owner>/<repo>/context.md        # Optional LLM guidance
 OWNERS                                               # Required for config-repo validation
 ```
 
-`config/global.yaml` supplies defaults and the global `allowed_models` list. Owner and repo `config.yaml` files override those defaults in that order. Nested maps merge; scalar values and lists replace inherited values. For example, `ci.ignore: []` clears inherited ignores, and `profiles: []` clears inherited profiles. Repo config can override any owner-config setting. Profiles add their rules after inheritance is resolved, and rule IDs must be unique in the effective policy.
+`config/global.yaml` supplies defaults and the global `allowed_models` list. Owner and repo `config.yaml` files override those defaults in that order. Nested maps merge; scalar values and lists replace inherited values. For example, `ci.ignore: []` clears inherited ignores, and `rules: []` clears inherited rules, including profile references. Repo config can override any owner-config setting. Profile references expand in place after inheritance is resolved, and rule names must be unique in the effective policy.
 
 Only `github.com` is implemented. Run `uv run auto-merge-agent validate-config` after every policy change; the agent-repo CI runs the same validation.
 
-JSON Schemas are available for [global config](../schemas/global.schema.json), [org and repo config](../schemas/repository.schema.json), and [profiles](../schemas/profile.schema.json). They provide editor completion and validate each file's structure. `validate-config` also checks the effective inherited policy, plugin names, duplicate rule IDs, model allowlisting, trusted authors, and required CI checks. The schemas are generated from the runtime models with `uv run python scripts/generate_schemas.py`; CI checks that the files stay current.
+JSON Schemas are available for [global config](../schemas/global.schema.json), [org and repo config](../schemas/repository.schema.json), and [profiles](../schemas/profile.schema.json). They provide editor completion and validate each file's structure. `validate-config` also checks the effective inherited policy, plugin names, duplicate rule names, model allowlisting, trusted authors, and required CI checks. The schemas are generated from the runtime models with `uv run python scripts/generate_schemas.py`; CI checks that the files stay current.
 
 ## Minimal repo policy
 
@@ -30,7 +30,7 @@ ci:
     - name: tests
       source: github-actions
 rules:
-  - id: docs-only
+  - name: docs-only
     type: changed_paths_only
     paths: ["README.md", "docs/**"]
 ```
@@ -59,9 +59,8 @@ Replace the CI check name and owner login with values from the target repo. `ena
 | `ci.min_successful_checks` | Minimum actual passing CI checks; at least `1`. |
 | `limits.max_changed_lines` | Repo-wide cap on additions plus deletions. Set `null` to remove this cap; default `200`. |
 | `limits.exclude_from_line_count` | Path patterns omitted from line counts, such as generated lockfiles. |
-| `profiles` | Names of reusable files in `profiles/`. |
 | `llm_context_files` | Optional list of relative paths to LLM guidance files in the target repository. The list replaces inherited values. |
-| `rules` | Repo eligibility rules; any one may qualify after all mandatory gates pass. |
+| `rules` | Eligibility rules or `profile` references; any expanded rule may qualify after all mandatory gates pass. Enabled repos need at least one effective rule. |
 | `merge.method` | `merge`, `squash`, or `rebase`; default `squash`. |
 | `human_review.comment` | Whether to post and update the human-review explanation comment. |
 | `human_review.mention` | GitHub users or teams to mention in that comment. |
@@ -72,28 +71,38 @@ Trusted authors use direct GitHub logins. OWNERS aliases and teams are not expan
 
 A selector has a `name` and optional `source`. For GitHub Actions check runs, `source` is the App slug, commonly `github-actions`. For commit statuses, it is the status creator's login. Prefer specifying `source` for expected checks. The agent reads check runs and commit statuses on the PR head and GitHub's test merge commit. Every observed, non-ignored check must conclude `success`; `neutral` and `skipped` do not count as success. Missing expected checks and checks still running make the decision wait. The bot's own `automerge/policy` check is excluded automatically.
 
+An expected check cannot also be ignored. Validation rejects that contradiction before the service starts.
+
 CodeRabbit may report a commit status as well as a review. If present and not ignored, its status must pass like any other observed check; it can also count toward `ci.min_successful_checks`. Name a real CI job in `ci.expected` so the reviewer status cannot stand in for CI. The reviewer adapter separately requires CodeRabbit's completed assessment to cover the current PR head SHA, even if its status passed. A new push invalidates the old review. CodeRabbit `Major` findings map to `high` severity and `Minor` to `medium`; overall merge risk is a separate gate. Unrecognized review output requires human review or waits for a new assessment.
 
-## Rules and LLM gates
+## Eligibility rules
 
-The built-in `changed_paths_only` rule requires every changed file to match one of its `paths` patterns. Optional `statuses` restricts file operations such as `modified` or `added`. Patterns use shell-style matching; `docs/**` matches files under `docs/`. The included `go-dependencies` profile allows modified `go.mod` and `go.sum` paths. It checks file paths and statuses, not dependency-version semantics; the mandatory CI and reviewer gates still apply. Eligibility rules are OR alternatives: if a static rule passes, the agent skips the LLM even when an LLM rule also matches. Within a selected LLM rule, configured complexity and custom criteria are both required.
+The built-in `changed_paths_only` rule requires every changed file to match one of its `paths` patterns. Optional `statuses` restricts file operations such as `modified` or `added`. Patterns use shell-style matching; `docs/**` matches files under `docs/`. The included `go-dependencies` profile allows modified `go.mod` and `go.sum` paths. It checks file paths and statuses, not dependency-version semantics; the mandatory CI and reviewer gates still apply.
 
-A matching rule may include `llm.complexity`, `llm.custom`, or both:
+Each rule has one criterion: `changed_paths_only`, `llm_complexity`, or `llm_custom`. Give every rule and `all` group a unique `name`; it appears in decisions and checklists. Entries in `rules` are alternatives; any one may qualify a PR. To reuse a policy, add `- profile: go-dependencies` as an entry. The agent replaces that entry with the rules in `profiles/go-dependencies.yaml`; each expanded rule is an alternative. Profile files contain rules or `all` groups and cannot reference other profiles. Put multiple separate rules in an `all` group when every criterion must pass. This makes the required relationship explicit. A passing static alternative skips LLM calls. For example:
 
 ```yaml
-llm:
-  complexity:
-    model: gpt-6-sol
-    max: low
-    max_changed_lines: 100
-  custom:
-    model: gpt-6-sol
-    max_changed_lines: 100
-    prompt: >-
-      Require human review for public API or interface-contract changes.
+rules:
+  - profile: go-dependencies
+  - name: small-maintenance
+    all:
+      - name: maintenance-paths
+        type: changed_paths_only
+        paths: ["*.go", "docs/**"]
+      - name: maintenance-complexity
+        type: llm_complexity
+        model: gpt-6-sol
+        max: low
+        max_changed_lines: 100
+      - name: maintenance-safety
+        type: llm_custom
+        model: gpt-6-sol
+        max_changed_lines: 100
+        prompt: >-
+          Require human review for public API or interface-contract changes.
 ```
 
-Each section's `max_changed_lines` is optional and independent. The agent applies `limits.exclude_from_line_count` to these caps and checks them before any model call. Exceeding a cap sends the PR to human review. Complexity is `low`, `medium`, or `high`; the custom step must return a structured `safe_to_merge` boolean and reason. The custom prompt can add a requirement but cannot override mandatory gates. Unavailable full-text patches or an LLM input above the built-in size limit also prevent automerge.
+LLM rules may use optional `paths` and `statuses` to limit which PRs they match. With no `paths`, they consider every PR that passes mandatory gates. Each LLM rule's `max_changed_lines` is independent. The agent applies `limits.exclude_from_line_count` to these caps and checks them before any model call. Exceeding a cap sends the PR to human review unless another top-level rule qualifies it. Complexity is `low`, `medium`, or `high`; the custom step must return a structured `safe_to_merge` boolean and reason. The custom prompt can add a requirement but cannot override mandatory gates. Unavailable full-text patches or an LLM input above the built-in size limit also prevent automerge. Every rule name, including names inside `all`, must be unique.
 
 For LLM rules, an optional `context.md` beside the repo's policy `config.yaml` is included automatically. The agent also reads the target repository's root `AGENTS.md`; if absent, it reads root `CLAUDE.md`. To include other files, set a list of paths in the policy:
 

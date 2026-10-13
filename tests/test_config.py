@@ -22,12 +22,12 @@ defaults:
     write(tmp_path / "configs/github.com/acme/config.yaml", """schema_version: 1
 review: {max_merge_risk: low}
 limits: {max_changed_lines: 50}
-profiles: [go-deps]
+rules: [{profile: go-deps}]
 trusted_authors: [org-maintainer]
 """)
     write(tmp_path / "profiles/go-deps.yaml", """schema_version: 1
 rules:
-  - {id: go, type: changed_paths_only, paths: [go.mod, go.sum]}
+  - {name: go, type: changed_paths_only, paths: [go.mod, go.sum]}
 """)
     write(tmp_path / "configs/github.com/acme/repo/OWNERS", "approvers: [mprahl]\nreviewers: [mprahl]\n")
 
@@ -38,21 +38,48 @@ def test_repo_can_override_every_org_field(tmp_path):
 enabled: true
 review: {max_merge_risk: high}
 limits: {max_changed_lines: 200}
-profiles: []
 trusted_authors: [repo-maintainer]
 ci: {expected: [{name: build}], ignore: []}
 rules:
-  - {id: docs, type: changed_paths_only, paths: ["docs/**"]}
+  - {name: docs, type: changed_paths_only, paths: ["docs/**"]}
 """)
     loaded = ConfigStore(tmp_path).load("github.com", "acme", "repo")
     assert loaded.policy.review.max_merge_risk.value == "high"
     assert loaded.policy.review.max_finding_severity.value == "medium"
     assert loaded.policy.limits.max_changed_lines == 200
-    assert loaded.policy.profiles == []
     assert loaded.policy.ci.ignore == []
-    assert [r.id for r in loaded.policy.rules] == ["docs"]
+    assert [r.name for r in loaded.policy.rules] == ["docs"]
     assert loaded.trusted_authors == ["repo-maintainer"]
     assert ConfigStore(tmp_path).validate_all() == ["github.com/acme/repo"]
+
+
+def test_profile_reference_expands_in_rule_order(tmp_path):
+    setup_config(tmp_path)
+    write(tmp_path / "profiles/go-deps.yaml", """schema_version: 1
+rules:
+  - {name: go-mod, type: changed_paths_only, paths: [go.mod]}
+  - {name: go-sum, type: changed_paths_only, paths: [go.sum]}
+""")
+    write(tmp_path / "configs/github.com/acme/repo/config.yaml", """schema_version: 1
+rules:
+  - {name: before, type: changed_paths_only, paths: [README.md]}
+  - {profile: go-deps}
+  - {name: after, type: changed_paths_only, paths: ["docs/**"]}
+""")
+    loaded = ConfigStore(tmp_path).load("github.com", "acme", "repo")
+    assert [rule.name for rule in loaded.policy.rules] == ["before", "go-mod", "go-sum", "after"]
+
+
+def test_profile_reference_rejects_invalid_names_and_nested_profiles(tmp_path):
+    setup_config(tmp_path)
+    path = tmp_path / "configs/github.com/acme/repo/config.yaml"
+    write(path, "schema_version: 1\nrules: [{profile: ../secrets}]\n")
+    with pytest.raises(ConfigError, match="string_pattern_mismatch"):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")
+    write(path, "schema_version: 1\nrules: [{profile: go-deps}]\n")
+    write(tmp_path / "profiles/go-deps.yaml", "schema_version: 1\nrules: [{profile: other}]\n")
+    with pytest.raises(ConfigError, match="Invalid profile"):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")
 
 
 def test_repo_can_return_to_own_approvers_and_revision_tracks_owners(tmp_path):
@@ -73,11 +100,11 @@ def test_unallowlisted_model_rejected(tmp_path):
 enabled: true
 ci: {expected: [{name: build}]}
 rules:
-  - id: docs
-    type: changed_paths_only
+  - name: docs
+    type: llm_custom
     paths: ["docs/**"]
-    llm:
-      custom: {model: unknown, prompt: "Is this safe?"}
+    model: unknown
+    prompt: "Is this safe?"
 """)
     with pytest.raises(ConfigError, match="not allowlisted"):
         ConfigStore(tmp_path).validate_all()
@@ -89,13 +116,48 @@ def test_negative_llm_line_cap_rejected(tmp_path):
 enabled: true
 ci: {expected: [{name: build}]}
 rules:
-  - id: docs
-    type: changed_paths_only
+  - name: docs
+    type: llm_complexity
     paths: ["docs/**"]
-    llm:
-      complexity: {model: gpt-6-sol, max: low, max_changed_lines: -1}
+    model: gpt-6-sol
+    max: low
+    max_changed_lines: -1
 """)
     with pytest.raises(ConfigError, match="greater than or equal to 0"):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")
+
+
+def test_rule_cannot_mix_criteria_and_group_names_must_be_unique(tmp_path):
+    setup_config(tmp_path)
+    path = tmp_path / "configs/github.com/acme/repo/config.yaml"
+    write(path, """schema_version: 1
+rules:
+  - name: mixed
+    type: llm_complexity
+    model: gpt-6-sol
+    max: low
+    prompt: "Also check the API"
+""")
+    with pytest.raises(ConfigError, match="no other criterion"):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")
+    write(path, """schema_version: 1
+rules:
+  - name: grouped
+    all:
+      - {name: same, type: changed_paths_only, paths: [go.mod]}
+      - {name: same, type: llm_custom, model: gpt-6-sol, prompt: "Safe?"}
+""")
+    with pytest.raises(ConfigError, match="Duplicate rule name"):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")
+
+
+def test_rule_name_is_required(tmp_path):
+    setup_config(tmp_path)
+    write(tmp_path / "configs/github.com/acme/repo/config.yaml", """schema_version: 1
+rules:
+  - {id: legacy, type: changed_paths_only, paths: [go.mod]}
+""")
+    with pytest.raises(ConfigError, match="name"):
         ConfigStore(tmp_path).load("github.com", "acme", "repo")
 
 
@@ -103,6 +165,20 @@ def test_enabled_repo_requires_expected_checks(tmp_path):
     setup_config(tmp_path)
     write(tmp_path / "configs/github.com/acme/repo/config.yaml", "schema_version: 1\nenabled: true\n")
     with pytest.raises(ConfigError, match="requires expected CI"):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")
+
+
+def test_enabled_repo_requires_rules_and_cannot_ignore_expected_check(tmp_path):
+    setup_config(tmp_path)
+    path = tmp_path / "configs/github.com/acme/repo/config.yaml"
+    write(path, "schema_version: 1\nenabled: true\nrules: []\nci: {expected: [{name: build}]}\n")
+    with pytest.raises(ConfigError, match="requires at least one eligibility rule"):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")
+    write(path, """schema_version: 1
+enabled: true
+ci: {expected: [{name: build, source: github-actions}], ignore: [{name: build}]}
+""")
+    with pytest.raises(ConfigError, match="also ignored"):
         ConfigStore(tmp_path).load("github.com", "acme", "repo")
 
 
