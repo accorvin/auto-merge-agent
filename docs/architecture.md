@@ -1,6 +1,6 @@
 # Architecture
 
-The agent separates GitHub transport, deterministic policy checks, reviewer interpretation, and optional LLM judgments. LangGraph orders one evaluation; an in-memory queue serializes webhook work.
+The agent separates GitHub transport, deterministic policy checks, reviewer interpretation, and optional LLM judgments. LangGraph orders one evaluation. The webhook service queues events; token mode polls configured repositories and evaluates open PRs directly.
 
 ```mermaid
 flowchart LR
@@ -49,6 +49,8 @@ LLM calls use structured Pydantic outputs for complexity and the custom `safe_to
 ## Runtime and observability
 
 The FastAPI service verifies the webhook signature and queues only repositories with an enabled, valid config. PR events queue the PR directly; commit-status events first resolve their SHA to open PRs. A single worker processes deduplicated jobs in memory and schedules transient failures for retry with backoff. It scans configured open PRs at startup and every 15 minutes, recovering pending work lost on a restart or missed webhook. Run one service process; the queue is not shared across processes. See [`service.py`](../src/auto_merge_agent/service.py).
+
+The `poll` command scans enabled repository configs at startup and at the configured interval, evaluating every open PR. It continues after individual repository or PR errors and retries them on a later scan. With a token, `automerge/policy` is a commit status; unchanged statuses are not reposted. Token mode resolves the token user's login so it updates only its own comments. See [`poll.py`](../src/auto_merge_agent/poll.py).
 
 `AUTOMERGE_ACTIVE=false` prevents GitHub writes by the service. The CLI's `evaluate` command independently prints read-only JSON unless `--execute` is explicitly used. When `MLFLOW_TRACKING_URI` is configured, `mlflow.langchain.autolog()` records LangGraph and model traces in the selected MLflow experiment. Trace inputs may contain PR code or descriptions; control access to that experiment. See [MLflow's LangGraph integration](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/langgraph). The service logs each reconciliation and PR decision at INFO level, including waiting reasons in shadow mode.
 

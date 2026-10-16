@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -42,12 +43,20 @@ def main():
     serve = sub.add_parser("serve")
     serve.add_argument("--host", default="0.0.0.0")
     serve.add_argument("--port", type=int, default=8000)
+    poll = sub.add_parser("poll", help="Poll configured repositories using GITHUB_TOKEN or gh auth")
+    poll.add_argument("--interval", type=float, default=900, help="Seconds between scans (default: 900)")
+    poll.add_argument("--once", action="store_true", help="Scan once and exit")
     args = parser.parse_args()
     if args.command == "validate-config":
         repos = ConfigStore(Path(args.config_root)).validate_all()
         print(f"Validated {len(repos)} repository configs")
     elif args.command == "evaluate":
         asyncio.run(_evaluate(args))
+    elif args.command == "poll":
+        from .poll import run_poll
+
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+        asyncio.run(run_poll(Path(args.config_root), interval=args.interval, once=args.once))
     else:
         import uvicorn
         from .service import create_app

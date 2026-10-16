@@ -198,3 +198,76 @@ async def test_decision_discovers_bot_login_and_reuses_app_output():
         assert len(runs) == 2
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_token_decision_uses_status_and_reuses_own_comment():
+    head = "a" * 40
+    statuses = []
+    comments = [{"id": 7, "body": "<!-- auto-merge-agent decision -->\nOld",
+                 "user": {"login": "maintainer", "type": "User"}}]
+    writes = []
+
+    def handler(request):
+        path = request.url.path
+        if path == "/user":
+            return httpx.Response(200, json={"login": "maintainer"})
+        if request.method == "GET":
+            return httpx.Response(200, json=comments if path.endswith("/comments") else statuses)
+        payload = json.loads(request.content)
+        writes.append((request.method, path, payload))
+        if "/statuses/" in path:
+            statuses.insert(0, {**payload, "creator": {"login": "maintainer"}})
+            return httpx.Response(201, json=statuses[0])
+        comments[0]["body"] = payload["body"]
+        return httpx.Response(200, json=comments[0])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    forge = GitHubForge(token="test", api_url="https://api.github.test", client=client)
+    ref = PullRequestRef(owner="acme", repo="repo", number=12)
+    pr = PullRequestSnapshot(ref=ref, head_sha=head, base_sha="b" * 40,
+                             state="open", draft=False, title="Test", url="https://example.com/pr/12", changed_files=1)
+    decision = Decision(state="human_review", head_sha=head, reasons=["CI failed"], config_revision="abc123")
+    try:
+        await forge.publish_decision(pr, decision, [], True)
+        await forge.publish_decision(pr, decision, [], True)
+    finally:
+        await client.aclose()
+    assert len(writes) == 2
+    assert writes[0] == ("POST", f"/repos/acme/repo/statuses/{head}", {
+        "state": "failure", "context": "automerge/policy", "description": "CI failed",
+        "target_url": pr.url,
+    })
+    assert writes[1][0:2] == ("PATCH", "/repos/acme/repo/issues/comments/7")
+    assert "/check-runs" not in [path for _, path, _ in writes]
+
+
+@pytest.mark.asyncio
+async def test_token_status_replaces_changed_decision_and_preserves_other_users_status():
+    head = "a" * 40
+    statuses = [{"context": "automerge/policy", "state": "pending", "description": "Old",
+                 "target_url": "https://example.com/pr/12", "creator": {"login": "someone-else"}}]
+    posted = []
+
+    def handler(request):
+        if request.url.path == "/user":
+            return httpx.Response(200, json={"login": "maintainer"})
+        if request.method == "GET":
+            return httpx.Response(200, json=statuses)
+        payload = json.loads(request.content)
+        posted.append(payload)
+        statuses.insert(0, {**payload, "creator": {"login": "maintainer"}})
+        return httpx.Response(201, json=statuses[0])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    forge = GitHubForge(token="test", api_url="https://api.github.test", client=client)
+    ref = PullRequestRef(owner="acme", repo="repo", number=12)
+    pr = PullRequestSnapshot(ref=ref, head_sha=head, base_sha="b" * 40,
+                             state="open", draft=False, title="Test", url="https://example.com/pr/12", changed_files=1)
+    try:
+        for state in ("waiting", "eligible", "eligible"):
+            await forge.publish_decision(pr, Decision(state=state, head_sha=head,
+                reasons=["Policy " + state], config_revision="abc123"), [], False)
+    finally:
+        await client.aclose()
+    assert [item["state"] for item in posted] == ["pending", "success"]

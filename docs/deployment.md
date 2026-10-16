@@ -1,6 +1,25 @@
-# Deploy the GitHub App
+# Deploy the agent
 
-The Git repository contains the agent code and policies. GitHub sends events to a running process; it does not execute this repository for you. A container image is optional. Run one service process behind a public HTTPS webhook endpoint. Its queue is in memory; startup and periodic scans recover open PRs after downtime.
+The Git repository contains the agent code and policies. Run it as a GitHub App receiving webhooks or as a process that polls with a GitHub token. A container image is optional.
+
+## Run with a GitHub token
+
+Create repository configs and validate them with `uv run auto-merge-agent validate-config`. The token's repository access and the enabled configs together determine which repositories are scanned. For a fine-grained personal access token, grant **Pull requests: read and write**, **Contents: read and write** for merging, **Checks: read**, **Commit statuses: read and write**, and **Issues: read and write** for comments. Shadow mode only reads. A classic token needs access to those repositories and suitable `repo` scope. [GitHub documents commit status permissions](https://docs.github.com/en/rest/commits/statuses) and [check-run writes are limited to GitHub Apps](https://docs.github.com/en/rest/checks/runs), so token mode publishes an `automerge/policy` commit status instead of a check run.
+
+```bash
+cd /path/to/auto-merge-agent
+uv sync --locked
+export AUTOMERGE_CONFIG_ROOT="$PWD"
+uv run auto-merge-agent poll --interval 900
+```
+
+Sign in with `gh auth login` first, or set `GITHUB_TOKEN` to override the local `gh` token. The command scans all enabled configs immediately and every 900 seconds. `--once` performs one scan and exits. It logs each decision; the default `AUTOMERGE_ACTIVE=false` makes no GitHub writes. Set `AUTOMERGE_ACTIVE=true` after shadow decisions match the policy. Active mode writes statuses and comments and may merge any eligible open PR in an enabled repository. A failed PR or repository is retried on the next scan. Run one polling process to avoid duplicate evaluations and merge attempts. No webhook URL, App ID, or App private key is needed.
+
+Keep `automerge/policy` informational in branch rules. A pending or failed token status can block the normal human merge path if made required. The token's user identity performs the merge, so GitHub's branch protection and review rules apply to that user. Use a dedicated account with the narrowest repository access that meets your policy.
+
+## Run as a GitHub App
+
+GitHub sends events to a running process; it does not execute this repository for you. Run one service process behind a public HTTPS webhook endpoint. Its queue is in memory; startup and periodic scans recover open PRs after downtime.
 
 ## Register and install the App
 
@@ -35,7 +54,7 @@ Subscribe to `pull_request`, `pull_request_review`, `pull_request_review_comment
 
 The config checkout is the repository allowlist. After signature verification, the webhook queues a PR only when `configs/github.com/<owner>/<repo>/config.yaml` exists, validates, and has `enabled: true`. Scheduled reconciliation scans those same repo config directories and skips disabled policies. GitHub App installation permissions further limit which repositories the service can access.
 
-The service refuses to start if `GITHUB_TOKEN` is set; it must authenticate as the App installation. The read-only CLI may use `GITHUB_TOKEN`. Provide credentials through your deployment's secret store and never commit them.
+The webhook service refuses to start if `GITHUB_TOKEN` is set; it must authenticate as the App installation. The `poll` command uses `GITHUB_TOKEN` or the local `gh` login. The `evaluate` command also accepts `GITHUB_TOKEN`. Provide credentials through your deployment's secret store and never commit them.
 
 The service learns its bot login from the first comment it creates or finds and shares it across webhook handling and later comment updates. Before then, it identifies its own events by App ID and comment marker.
 

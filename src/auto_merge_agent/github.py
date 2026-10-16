@@ -116,6 +116,17 @@ class GitHubForge:
     async def _call(self, ref: PullRequestRef, method: str, path: str, **kwargs) -> Any:
         return await self._request(method, path, bearer=await self._token(ref), **kwargs)
 
+    async def identify_token_user(self) -> str:
+        if not self.token:
+            raise GitHubError("GITHUB_TOKEN is required to identify the token user")
+        if self.bot_login is None:
+            user = await self._request("GET", "/user", bearer=self.token)
+            login = user.get("login") if isinstance(user, dict) else None
+            if not isinstance(login, str) or not login:
+                raise GitHubError("GitHub did not return a login for GITHUB_TOKEN")
+            self.bot_login = login
+        return self.bot_login
+
     async def _pages(self, ref: PullRequestRef, path: str) -> list[dict]:
         result: list[dict] = []
         for page in range(1, 101):
@@ -240,6 +251,53 @@ class GitHubForge:
 
     async def publish_decision(self, pr: PullRequestSnapshot, decision: Decision, mention: list[str], comment: bool) -> None:
         ref = pr.ref
+        if self.token and not self.app_id:
+            await self._publish_token_status(pr, decision)
+        else:
+            await self._publish_app_check(pr, decision)
+        if not comment:
+            return
+        if self.token and not self.app_id:
+            await self.identify_token_user()
+        summary = "\n".join(f"- {reason}" for reason in decision.reasons)
+        marker = "<!-- auto-merge-agent decision -->"
+        old = await self._pages(ref, f"/repos/{ref.slug}/issues/{ref.number}/comments")
+        previous = next((item for item in old if self._own_comment(item, marker)), None)
+        if previous:
+            self._remember_comment_author(previous)
+        if decision.state == "waiting" and previous is None:
+            return
+        mentions = " ".join(value for value in mention if re.fullmatch(r"@[A-Za-z0-9-]+(?:/[A-Za-z0-9_.-]+)?", value))
+        body = f"{marker}\n**Automerge: {decision.state.replace('_', ' ')}** for `{decision.head_sha[:12]}`.\n\n{summary}"
+        if decision.state == "human_review" and mentions:
+            body += f"\n\nHuman review requested: {mentions}"
+        if previous:
+            if previous["body"] != body:
+                await self._call(ref, "PATCH", f"/repos/{ref.slug}/issues/comments/{previous['id']}", json_data={"body": body})
+        elif decision.state == "human_review":
+            created = await self._call(ref, "POST", f"/repos/{ref.slug}/issues/{ref.number}/comments", json_data={"body": body})
+            self._remember_comment_author(created)
+
+    async def _publish_token_status(self, pr: PullRequestSnapshot, decision: Decision) -> None:
+        login = await self.identify_token_user()
+        ref = pr.ref
+        description = " ".join(decision.reasons).strip()[:140] or decision.state.replace("_", " ")
+        payload = {
+            "state": {"eligible": "success", "waiting": "pending", "human_review": "failure"}[decision.state],
+            "context": "automerge/policy",
+            "description": description,
+            "target_url": pr.url,
+        }
+        statuses = await self._pages(ref, f"/repos/{ref.slug}/commits/{pr.head_sha}/statuses")
+        latest = next((item for item in statuses if item.get("context", "").lower() == "automerge/policy"), None)
+        if latest and (latest.get("creator") or {}).get("login", "").lower() == login.lower() and all(
+            latest.get(key) == value for key, value in payload.items()
+        ):
+            return
+        await self._call(ref, "POST", f"/repos/{ref.slug}/statuses/{pr.head_sha}", json_data=payload)
+
+    async def _publish_app_check(self, pr: PullRequestSnapshot, decision: Decision) -> None:
+        ref = pr.ref
         conclusion = {"eligible": "success", "waiting": None, "human_review": "action_required"}[decision.state]
         summary = "\n".join(f"- {reason}" for reason in decision.reasons)
         payload: dict[str, Any] = {
@@ -269,25 +327,6 @@ class GitHubForge:
                 await self._call(ref, "PATCH", f"/repos/{ref.slug}/check-runs/{existing['id']}", json_data=payload)
         else:
             await self._call(ref, "POST", f"/repos/{ref.slug}/check-runs", json_data=payload)
-        if not comment:
-            return
-        marker = "<!-- auto-merge-agent decision -->"
-        old = await self._pages(ref, f"/repos/{ref.slug}/issues/{ref.number}/comments")
-        previous = next((item for item in old if self._own_comment(item, marker)), None)
-        if previous:
-            self._remember_comment_author(previous)
-        if decision.state == "waiting" and previous is None:
-            return
-        mentions = " ".join(value for value in mention if re.fullmatch(r"@[A-Za-z0-9-]+(?:/[A-Za-z0-9_.-]+)?", value))
-        body = f"{marker}\n**Automerge: {decision.state.replace('_', ' ')}** for `{decision.head_sha[:12]}`.\n\n{summary}"
-        if decision.state == "human_review" and mentions:
-            body += f"\n\nHuman review requested: {mentions}"
-        if previous:
-            if previous["body"] != body:
-                await self._call(ref, "PATCH", f"/repos/{ref.slug}/issues/comments/{previous['id']}", json_data={"body": body})
-        elif decision.state == "human_review":
-            created = await self._call(ref, "POST", f"/repos/{ref.slug}/issues/{ref.number}/comments", json_data={"body": body})
-            self._remember_comment_author(created)
 
     async def publish_merge_checklist(self, pr: PullRequestSnapshot, decision: Decision, outcome: str) -> None:
         if decision.state != "eligible" or not decision.passed_checks:

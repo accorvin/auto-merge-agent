@@ -1,7 +1,7 @@
 [project]
 name = "auto-merge-agent"
 version = "0.1.0"
-description = "Policy-driven GitHub App for low-risk pull request merges"
+description = "Policy-driven GitHub agent for low-risk pull request merges"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
