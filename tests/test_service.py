@@ -69,8 +69,11 @@ async def test_webhook_verifies_signature_and_queues_status_commit(tmp_path, mon
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         bad = await client.post("/webhook", content=body, headers={"X-GitHub-Event": "status", "X-Hub-Signature-256": "sha256=bad"})
         assert bad.status_code == 401
+        non_ascii = await client.post("/webhook", content=body, headers={b"X-GitHub-Event": b"status", b"X-Hub-Signature-256": b"sha256=\xff"})
+        assert non_ascii.status_code == 401
         good = await client.post("/webhook", content=body, headers={"X-GitHub-Event": "status", "X-Hub-Signature-256": signature})
         assert good.status_code == 200
+        assert good.json() == {"queued": 1}
         outside = json.dumps({"repository": {"owner": {"login": "other-org", "id": 99}, "name": "repo"}, "sha": "b" * 40}).encode()
         outside_signature = "sha256=" + hmac.new(b"test-secret", outside, hashlib.sha256).hexdigest()
         ignored_outside = await client.post("/webhook", content=outside, headers={"X-GitHub-Event": "status", "X-Hub-Signature-256": outside_signature})
@@ -113,12 +116,13 @@ async def test_webhook_ignores_own_events_and_unrelated_pr_actions(tmp_path, mon
         return response.json()
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        own_comment = {"action": "created", "issue": {"number": 12, "pull_request": {}},
+        own_comment = {"action": "created", "issue": {"number": 12, "pull_request": {"url": "https://example.com/pr/12"}},
                        "sender": {"login": "real-app[bot]", "type": "Bot"},
-                       "comment": {"body": "<!-- auto-merge-agent decision -->\nReview needed"}}
+                       "comment": {"body": "<!-- auto-merge-agent decision -->\nReview needed",
+                                   "performed_via_github_app": {"id": 123}}}
         assert await deliver(client, "issue_comment", own_comment) == {"queued": 0}
         app.state.forge._remember_comment_author({"user": {"login": "real-app[bot]"}})
-        assert await deliver(client, "issue_comment", {"action": "created", "issue": {"number": 12, "pull_request": {}},
+        assert await deliver(client, "issue_comment", {"action": "created", "issue": {"number": 12, "pull_request": {"url": "https://example.com/pr/12"}},
                                                        "sender": {"login": "real-app[bot]"},
                                                        "comment": {"body": "A later bot comment"}}) == {"queued": 0}
         assert await deliver(client, "pull_request", {"action": "assigned", "number": 12}) == {"queued": 0}
@@ -126,6 +130,20 @@ async def test_webhook_ignores_own_events_and_unrelated_pr_actions(tmp_path, mon
                                                     "check_run": {"name": "automerge/policy", "app": {"id": 123},
                                                                   "pull_requests": [{"number": 12}]}}) == {"queued": 0}
         assert app.state.jobs.pending == set()
+        assert await deliver(client, "issue_comment", {
+            "action": "created", "issue": {"number": 13, "pull_request": {"url": "https://example.com/pr/13"}},
+            "sender": {"login": "other[bot]", "type": "Bot"},
+            "comment": {"body": "<!-- auto-merge-agent decision -->", "performed_via_github_app": {"id": 456}},
+        }) == {"queued": 1}
+        comment_job = await app.state.jobs.next()
+        app.state.jobs.finish(comment_job)
+        assert await deliver(client, "check_run", {
+            "action": "completed", "check_run": {"name": "build", "app": {"id": 456},
+                                                   "head_sha": "a" * 40, "pull_requests": []},
+        }) == {"queued": 1}
+        commit_job = await app.state.jobs.next()
+        assert commit_job == ("commit", "acme", "repo", "a" * 40)
+        app.state.jobs.finish(commit_job)
         assert await deliver(client, "check_run", {"action": "completed", "sender": {"login": "ci[bot]"},
                                                     "check_run": {"name": "build", "app": {"id": 456},
                                                                   "pull_requests": [{"number": 12}]}}) == {"queued": 1}

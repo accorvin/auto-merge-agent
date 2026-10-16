@@ -53,6 +53,28 @@ rules:
     assert ConfigStore(tmp_path).validate_all() == ["github.com/acme/repo"]
 
 
+@pytest.mark.parametrize("content", [
+    "schema_version: 1\nenabled: false\nenabled: true\n",
+    "schema_version: 1\nreview: {max_merge_risk: low, max_merge_risk: high}\n",
+])
+def test_duplicate_explicit_yaml_keys_are_rejected(tmp_path, content):
+    setup_config(tmp_path)
+    write(tmp_path / "configs/github.com/acme/repo/config.yaml", content)
+    with pytest.raises(ConfigError, match="Duplicate YAML key"):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")
+
+
+def test_yaml_merge_key_can_be_overridden_explicitly(tmp_path):
+    setup_config(tmp_path)
+    write(tmp_path / "configs/github.com/acme/repo/config.yaml", """schema_version: 1
+review:
+  <<: &review_defaults {max_merge_risk: low}
+  max_merge_risk: moderate
+""")
+    loaded = ConfigStore(tmp_path).load("github.com", "acme", "repo")
+    assert loaded.policy.review.max_merge_risk.value == "moderate"
+
+
 def test_profile_reference_expands_in_rule_order(tmp_path):
     setup_config(tmp_path)
     write(tmp_path / "profiles/go-deps.yaml", """schema_version: 1
@@ -68,6 +90,20 @@ rules:
 """)
     loaded = ConfigStore(tmp_path).load("github.com", "acme", "repo")
     assert [rule.name for rule in loaded.policy.rules] == ["before", "go-mod", "go-sum", "after"]
+
+
+@pytest.mark.parametrize("relative, content", [
+    ("profiles/unused.yaml", "schema_version: 1\nrules: [{profile: other}]\n"),
+    ("profiles/unused.yaml", "schema_version: 1\nrules: [{name: bad, type: no-such-plugin}]\n"),
+    ("profiles/unused.yaml", "schema_version: 1\nrules: [{name: bad, type: llm_custom, model: unknown, prompt: 'Safe?'}]\n"),
+    ("configs/github.com/unused/config.yaml", "schema_version: 1\nenabled: invalid\n"),
+    ("configs/github.com/unused/config.yaml", "schema_version: 1\nrules: [{profile: missing}]\n"),
+])
+def test_validation_rejects_invalid_unused_policy_files(tmp_path, relative, content):
+    setup_config(tmp_path)
+    write(tmp_path / relative, content)
+    with pytest.raises(ConfigError):
+        ConfigStore(tmp_path).validate_all()
 
 
 def test_profile_reference_rejects_invalid_names_and_nested_profiles(tmp_path):

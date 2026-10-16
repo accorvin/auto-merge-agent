@@ -18,6 +18,8 @@ OWNERS                                               # Required for config-repo 
 
 Only `github.com` is implemented. Run `uv run auto-merge-agent validate-config` after every policy change; the agent-repo CI runs the same validation.
 
+Validation includes standalone owner policies and every profile, even if no repository references them. Duplicate explicit YAML keys are rejected; normal YAML anchor/merge overrides remain supported.
+
 JSON Schemas are available for [global config](../schemas/global.schema.json), [org and repo config](../schemas/repository.schema.json), and [profiles](../schemas/profile.schema.json). They provide editor completion and validate each file's structure. `validate-config` also checks the effective inherited policy, plugin names, duplicate rule names, model allowlisting, trusted authors, and required CI checks. The schemas are generated from the runtime models with `uv run python scripts/generate_schemas.py`; CI checks that the files stay current.
 
 ## Minimal repo policy
@@ -77,7 +79,7 @@ CodeRabbit may report a commit status as well as a review. If present and not ig
 
 ## Eligibility rules
 
-The built-in `changed_paths_only` rule requires every changed file to match one of its `paths` patterns. Optional `statuses` restricts file operations such as `modified` or `added`. Patterns use shell-style matching; `docs/**` matches files under `docs/`. The included `go-dependencies` profile allows modified `go.mod` and `go.sum` paths. It checks file paths and statuses, not dependency-version semantics; the mandatory CI and reviewer gates still apply.
+The built-in `changed_paths_only` rule requires every changed file to match one of its `paths` patterns. For renames, both the old and new paths must match; missing old-path metadata fails the path rule. Both paths must also match `limits.exclude_from_line_count` for a rename to be excluded. These path checks also apply to scoped LLM rules. Optional `statuses` restricts file operations such as `modified` or `added`. Patterns use shell-style matching; `docs/**` matches files under `docs/`. The included `go-dependencies` profile allows modified `go.mod` and `go.sum` paths. It checks file paths and statuses, not dependency-version semantics; the mandatory CI and reviewer gates still apply.
 
 Each rule has one criterion: `changed_paths_only`, `llm_complexity`, or `llm_custom`. Give every rule and `all` group a unique `name`; it appears in decisions and checklists. Entries in `rules` are alternatives; any one may qualify a PR. To reuse a policy, add `- profile: go-dependencies` as an entry. The agent replaces that entry with the rules in `profiles/go-dependencies.yaml`; each expanded rule is an alternative. Profile files contain rules or `all` groups and cannot reference other profiles. Put multiple separate rules in an `all` group when every criterion must pass. This makes the required relationship explicit. A passing static alternative skips LLM calls. For example:
 
@@ -103,6 +105,8 @@ rules:
 ```
 
 LLM rules may use optional `paths` and `statuses` to limit which PRs they match. With no `paths`, they consider every PR that passes mandatory gates. Each LLM rule's `max_changed_lines` is independent. The agent applies `limits.exclude_from_line_count` to these caps and checks them before any model call. Exceeding a cap sends the PR to human review unless another top-level rule qualifies it. Complexity is `low`, `medium`, or `high`; the custom step must return a structured `safe_to_merge` boolean and reason. The custom prompt can add a requirement but cannot override mandatory gates. Unavailable full-text patches or an LLM input above the built-in size limit also prevent automerge. Every rule name, including names inside `all`, must be unique.
+
+Before an LLM call, patch additions and deletions must match GitHub's file totals. If a patch is missing or truncated, the agent retrieves a full comparison pinned to the evaluated base and head SHAs and verifies those totals again. Recovered diff metadata, including file-mode changes, is included in the model input. Retrieval failures make the decision wait; binary or still-incomplete diffs require human review. Static-only eligibility does not trigger this extra request.
 
 For LLM rules, an optional `context.md` beside the repo's policy `config.yaml` is included automatically. The agent also reads the target repository's root `AGENTS.md`; if absent, it reads root `CLAUDE.md`. To include other files, set a list of paths in the policy:
 

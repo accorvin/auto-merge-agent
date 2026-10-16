@@ -19,6 +19,8 @@ class DemoForge:
         self.files = files
         self.repository_files = {}
         self.context_requests = []
+        self.diff_requests = 0
+        self.complete_files = files
         self.checks = [
             Check(name="lint", source="github-actions", status="completed", conclusion="success"),
             Check(name="CodeRabbit", source="coderabbitai[bot]", status="completed", conclusion="success"),
@@ -33,6 +35,10 @@ class DemoForge:
 
     async def get_changed_files(self, pr):
         return self.files
+
+    async def get_complete_changed_files(self, pr, files):
+        self.diff_requests += 1
+        return self.complete_files
 
     async def get_checks(self, pr):
         return self.checks
@@ -66,7 +72,36 @@ class DemoJudge:
 
 
 def file(path, additions=1, deletions=1):
-    return ChangedFile(path=path, status="modified", additions=additions, deletions=deletions, patch="example")
+    patch = f"@@ -1,{deletions} +1,{additions} @@\n" + "-old\n" * deletions + "+new\n" * additions
+    return ChangedFile(path=path, status="modified", additions=additions, deletions=deletions, patch=patch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovered", [True, False])
+async def test_incomplete_patch_is_retrieved_before_llm(recovered):
+    complete = file("main.go", additions=2)
+    forge = DemoForge([complete.model_copy(update={"patch": "@@ -1 +1 @@\n-old\n+new"})])
+    if recovered:
+        forge.complete_files = [complete]
+    judge = DemoJudge()
+    _, result = await EvaluationEngine(ConfigStore(ROOT), forge, DemoReviewer(), judge).evaluate(REF)
+    assert forge.diff_requests == 1
+    assert result.state == ("eligible" if recovered else "human_review")
+    assert judge.calls == (2 if recovered else 0)
+
+
+@pytest.mark.asyncio
+async def test_complete_diff_failure_waits_without_calling_llm():
+    class UnavailableForge(DemoForge):
+        async def get_complete_changed_files(self, pr, files):
+            raise RuntimeError("Unavailable")
+
+    forge = UnavailableForge([file("main.go").model_copy(update={"patch": None})])
+    judge = DemoJudge()
+    _, result = await EvaluationEngine(ConfigStore(ROOT), forge, DemoReviewer(), judge).evaluate(REF)
+    assert result.state == "waiting"
+    assert "Complete diff unavailable" in result.reasons[0]
+    assert judge.calls == 0
 
 
 @pytest.mark.asyncio

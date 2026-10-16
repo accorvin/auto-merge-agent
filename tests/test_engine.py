@@ -3,10 +3,31 @@ from pathlib import Path
 import pytest
 
 from auto_merge_agent.config import ConfigStore
-from auto_merge_agent.engine import EvaluationEngine
+from auto_merge_agent.engine import EvaluationEngine, _counted_lines, _human_change_request
+from auto_merge_agent.rules import rule_evaluator
 from auto_merge_agent.types import (
-    Check, ChangedFile, MergeRisk, PullRequestRef, PullRequestSnapshot, ReviewAssessment,
+    Check, ChangedFile, MergeRisk, PullRequestRef, PullRequestSnapshot, ReviewArtifact, ReviewAssessment,
+    RuleConfig,
 )
+
+
+@pytest.mark.parametrize("previous_path, expected", [("src/app.py", "reject"), (None, "reject"), ("docs/old.md", "pass")])
+@pytest.mark.parametrize("rule_type", ["changed_paths_only", "llm_custom"])
+def test_renamed_file_requires_both_paths_in_scope(previous_path, expected, rule_type):
+    file = ChangedFile(path="docs/new.md", previous_path=previous_path, status="renamed", additions=10, deletions=5)
+    options = {"model": "test", "prompt": "Safe?"} if rule_type == "llm_custom" else {}
+    rule = RuleConfig(name="docs", type=rule_type, paths=["docs/**"], **options)
+    assert rule_evaluator(rule_type).evaluate(rule, [file]).state == expected
+    assert _counted_lines([file], ["docs/**"]) == (0 if expected == "pass" else 15)
+
+
+@pytest.mark.parametrize("later_state, blocked", [("COMMENTED", True), ("PENDING", True), ("APPROVED", False)])
+def test_only_substantive_reviews_clear_change_requests(later_state, blocked):
+    artifacts = [
+        ReviewArtifact(kind="review", author="alice", body="", url="", state="CHANGES_REQUESTED", updated_at="2026-01-01T00:00:00Z"),
+        ReviewArtifact(kind="review", author="alice", body="", url="", state=later_state, updated_at="2026-01-02T00:00:00Z"),
+    ]
+    assert _human_change_request(artifacts) is blocked
 
 
 def make_store(tmp_path: Path):

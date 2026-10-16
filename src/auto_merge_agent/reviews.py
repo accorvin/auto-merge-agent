@@ -7,6 +7,7 @@ from .types import Finding, MergeRisk, PullRequestSnapshot, ReviewArtifact, Revi
 
 
 _RISK = re.compile(r"\*\*Merge Risk:\*\*\s*[*_]*[^\w_]*(Minimal|Low|Moderate|High|Critical)(?=$|[^A-Za-z])", re.I)
+_RISK_SECTION = re.compile(r"<!-- final_review_risk_start -->(.*?)<!-- final_review_risk_end -->", re.S)
 _COVERAGE = re.compile(r"<!-- final_review_risk_coverage:(\{[^\n]+\}) -->")
 _SEVERITY = re.compile(r"^\*\*[^\n|]+\*\*\s*\|\s*\*\*[^\w]*(Critical|Major|Minor|Trivial|Info)\*\*", re.I)
 _OUTSIDE_COUNT = re.compile(r"Outside diff range comments \((\d+)\)")
@@ -36,7 +37,11 @@ class CodeRabbitReviewer:
         if not comments:
             return ReviewAssessment(state="waiting", reason="Waiting for a CodeRabbit summary")
         summary = max(comments, key=lambda a: a.updated_at or "")
-        coverages = _COVERAGE.findall(summary.body)
+        sections = _RISK_SECTION.findall(summary.body)
+        if len(sections) != 1:
+            return ReviewAssessment(state="unavailable", reason="Could not identify one CodeRabbit final risk assessment", evidence_url=summary.url)
+        risk_section = sections[0]
+        coverages = _COVERAGE.findall(risk_section)
         matching = False
         for raw in coverages:
             try:
@@ -54,7 +59,7 @@ class CodeRabbitReviewer:
             return ReviewAssessment(state="waiting", reason=reason, evidence_url=summary.url)
         if "Review limit reached" in summary.body.split("<!-- walkthrough_start -->")[0]:
             return ReviewAssessment(state="unavailable", reason="CodeRabbit reported a review limit", evidence_url=summary.url)
-        risk_match = _RISK.search(summary.body)
+        risk_match = _RISK.search(risk_section)
         if not risk_match:
             return ReviewAssessment(state="unavailable", reason="Could not parse CodeRabbit merge risk", evidence_url=summary.url)
 

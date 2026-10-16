@@ -3,13 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import ValidationError
 
-from .types import AllRulesConfig, ConfigLayer, GlobalConfig, LoadedConfig, PolicyConfig, ProfileConfig, ProfileEntry, ProfileRuleConfig
+from .types import AllRulesConfig, ConfigLayer, EligibilityRule, GlobalConfig, LoadedConfig, PolicyConfig, ProfileConfig, ProfileEntry, ProfileRuleConfig
 from .plugins import load_plugin
 from .rules import rule_evaluator
 
@@ -18,10 +19,27 @@ class ConfigError(ValueError):
     pass
 
 
+class _PolicyLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        if isinstance(node, yaml.MappingNode):
+            seen = set()
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    continue
+                key = self.construct_object(key_node, deep=deep)
+                try:
+                    if key in seen:
+                        raise yaml.constructor.ConstructorError(None, None, f"Duplicate YAML key: {key!r}", key_node.start_mark)
+                    seen.add(key)
+                except TypeError as exc:
+                    raise yaml.constructor.ConstructorError(None, None, "Unhashable YAML key", key_node.start_mark) from exc
+        return super().construct_mapping(node, deep=deep)
+
+
 def _read_yaml(path: Path) -> dict[str, Any]:
     try:
-        value = yaml.safe_load(path.read_text())
-    except (OSError, yaml.YAMLError) as exc:
+        value = yaml.load(path.read_text(encoding="utf-8"), Loader=_PolicyLoader)
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ConfigError(f"Cannot read {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise ConfigError(f"{path} must contain a YAML mapping")
@@ -73,27 +91,7 @@ class ConfigStore:
         except ValidationError as exc:
             raise ConfigError(f"Invalid effective config for {owner}/{repo}: {exc}") from exc
 
-        rules: list[ProfileEntry] = []
-        for entry in policy.rules:
-            if isinstance(entry, ProfileRuleConfig):
-                profile_path = self.root / "profiles" / f"{entry.profile}.yaml"
-                try:
-                    rules.extend(ProfileConfig.model_validate(_read_yaml(profile_path)).rules)
-                except ValidationError as exc:
-                    raise ConfigError(f"Invalid profile {profile_path}: {exc}") from exc
-            else:
-                rules.append(entry)
-        atomic_rules = [part for rule in rules for part in (rule.all if isinstance(rule, AllRulesConfig) else [rule])]
-        all_names = [rule.name for rule in rules] + [part.name for rule in rules if isinstance(rule, AllRulesConfig) for part in rule.all]
-        if len(set(all_names)) != len(all_names):
-            raise ConfigError(f"Duplicate rule name in {owner}/{repo}")
-        for rule in atomic_rules:
-            try:
-                rule_evaluator(rule.type)
-            except ValueError as exc:
-                raise ConfigError(str(exc)) from exc
-            if rule.model and rule.model not in global_config.allowed_models:
-                raise ConfigError(f"Rule {rule.name}: model {rule.model!r} is not allowlisted")
+        rules = self._resolve_rules(policy.rules, global_config.allowed_models, f"{owner}/{repo}")
         if policy.enabled and not policy.ci.expected:
             raise ConfigError(f"Enabled repo {owner}/{repo} requires expected CI checks")
         if policy.enabled and not rules:
@@ -134,9 +132,55 @@ class ConfigStore:
         revision = hashlib.sha256(canonical.encode()).hexdigest()[:16]
         return LoadedConfig(policy=policy, allowed_models=global_config.allowed_models, trusted_authors=trusted_authors, revision=revision, llm_context=llm_context)
 
+    def _resolve_rules(self, entries: Sequence[EligibilityRule], allowed_models: list[str], location: str) -> list[ProfileEntry]:
+        rules: list[ProfileEntry] = []
+        for entry in entries:
+            if isinstance(entry, ProfileRuleConfig):
+                profile_path = self.root / "profiles" / f"{entry.profile}.yaml"
+                try:
+                    rules.extend(ProfileConfig.model_validate(_read_yaml(profile_path)).rules)
+                except ValidationError as exc:
+                    raise ConfigError(f"Invalid profile {profile_path}: {exc}") from exc
+            else:
+                rules.append(entry)
+        atomic_rules = [part for rule in rules for part in (rule.all if isinstance(rule, AllRulesConfig) else [rule])]
+        all_names = [rule.name for rule in rules] + [part.name for rule in rules if isinstance(rule, AllRulesConfig) for part in rule.all]
+        if len(set(all_names)) != len(all_names):
+            raise ConfigError(f"Duplicate rule name in {location}")
+        for rule in atomic_rules:
+            try:
+                rule_evaluator(rule.type)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
+            if rule.model and rule.model not in allowed_models:
+                raise ConfigError(f"Rule {rule.name}: model {rule.model!r} is not allowlisted")
+        return rules
+
     def validate_all(self) -> list[str]:
         if not (self.root / "OWNERS").is_file():
             raise ConfigError("Root OWNERS file is required")
+        global_config = self._global()
+        self._resolve_rules(global_config.defaults.rules, global_config.allowed_models, "global defaults")
+        try:
+            load_plugin("reviewers", global_config.defaults.review.plugin)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        for path in sorted((self.root / "profiles").glob("*.yaml")):
+            try:
+                profile = ProfileConfig.model_validate(_read_yaml(path))
+            except ValidationError as exc:
+                raise ConfigError(f"Invalid profile {path}: {exc}") from exc
+            self._resolve_rules(profile.rules, global_config.allowed_models, str(path))
+        for path in sorted((self.root / "configs").glob("*/*/config.yaml")):
+            if path.relative_to(self.root / "configs").parts[0] != "github.com":
+                raise ConfigError(f"Unsupported host in {path}")
+            try:
+                layer = ConfigLayer.model_validate(_read_yaml(path))
+                if layer.review and layer.review.plugin is not None:
+                    load_plugin("reviewers", layer.review.plugin)
+            except ValueError as exc:
+                raise ConfigError(f"Invalid {path}: {exc}") from exc
+            self._resolve_rules(layer.rules or [], global_config.allowed_models, str(path))
         paths = sorted((self.root / "configs").glob("*/*/*/config.yaml"))
         found = []
         for path in paths:
@@ -146,5 +190,4 @@ class ConfigStore:
             host, owner, repo, _ = relative.parts
             self.load(host, owner, repo)
             found.append(f"{host}/{owner}/{repo}")
-        self._global()
         return found

@@ -40,6 +40,23 @@ def test_major_finding_normalized_to_high():
     assert [finding.severity.value for finding in assessment.findings] == ["high"]
 
 
+def test_risk_is_read_only_from_the_covered_final_assessment():
+    current = pr()
+    comment = summary(current.head_sha, "High", prefix="Quoted example: **Merge Risk:** Minimal")
+    assessment = CodeRabbitReviewer().assess(current, [comment])
+    assert assessment.state == "complete"
+    assert assessment.merge_risk.value == "high"
+
+
+def test_coverage_outside_final_assessment_does_not_establish_current_review():
+    current = pr()
+    comment = summary("b" * 40, prefix=(
+        f'<!-- final_review_risk_coverage:{{"coveredCommitId":"{current.head_sha}","kind":"reviewed"}} -->'
+    ))
+    assessment = CodeRabbitReviewer().assess(current, [comment])
+    assert assessment.state != "complete"
+
+
 def test_relocated_comment_from_older_review_is_not_current_finding():
     current = pr("c" * 40)
     old_review = ReviewArtifact(kind="review", id=7, author="coderabbitai[bot]",

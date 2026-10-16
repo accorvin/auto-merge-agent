@@ -8,7 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from .config import ConfigStore
 from .llm import LangChainJudge
 from .plugins import ForgePlugin, ReviewerPlugin, load_plugin
-from .rules import path_matches, rule_evaluator
+from .rules import file_matches, rule_evaluator
 from .types import (
     AllRulesConfig, ChangedFile, Check, CheckSelector, Decision, EligibilityRule, LoadedConfig,
     PullRequestRef, PullRequestSnapshot, RISK_ORDER, SEVERITY_ORDER, ReviewArtifact, RuleConfig,
@@ -44,7 +44,7 @@ def _relevant_ci_checks(checks: list[Check], config: LoadedConfig) -> list[Check
 def _counted_lines(files: list[ChangedFile], excluded_paths: list[str]) -> int:
     return sum(
         file.additions + file.deletions for file in files
-        if not any(path_matches(file.path, pattern) for pattern in excluded_paths)
+        if not file_matches(file, excluded_paths)
     )
 
 
@@ -77,6 +77,8 @@ def _human_change_request(artifacts: list[ReviewArtifact]) -> bool:
     latest: dict[str, ReviewArtifact] = {}
     for artifact in artifacts:
         if artifact.kind != "review" or artifact.author.endswith("[bot]"):
+            continue
+        if artifact.state in ("COMMENTED", "PENDING"):
             continue
         if artifact.author not in latest or (artifact.updated_at or "") > (latest[artifact.author].updated_at or ""):
             latest[artifact.author] = artifact
@@ -197,6 +199,15 @@ class EvaluationEngine:
             return {"decision": Decision(state="human_review", head_sha=pr.head_sha, reasons=reasons, config_revision=config.revision)}
         if self.judge is None:
             return {"decision": Decision(state="human_review", head_sha=pr.head_sha, reasons=reasons + ["LLM evaluator unavailable"], config_revision=config.revision)}
+        files = state["files"]
+        if any(not file.has_complete_patch for file in files):
+            try:
+                files = await self.forge.get_complete_changed_files(pr, files)
+            except Exception as exc:
+                logger.exception("Could not load complete diff for %s#%s", pr.ref.slug, pr.ref.number)
+                return {"decision": Decision(state="waiting", head_sha=pr.head_sha, reasons=reasons + [f"Complete diff unavailable: {type(exc).__name__}"], config_revision=config.revision)}
+            if len(files) != pr.changed_files or any(not file.has_complete_patch for file in files):
+                return {"decision": Decision(state="human_review", head_sha=pr.head_sha, reasons=reasons + ["Full text diff unavailable for LLM evaluation"], config_revision=config.revision)}
         context: dict[str, str] = {}
         if config.llm_context:
             context["policy/context.md"] = config.llm_context
@@ -222,7 +233,7 @@ class EvaluationEngine:
             for part in _parts(rule):
                 if part.type not in ("llm_complexity", "llm_custom"):
                     continue
-                verdict = await self.judge.evaluate(part, state["files"], pr.title, pr.body, context)
+                verdict = await self.judge.evaluate(part, files, pr.title, pr.body, context)
                 if verdict.state != "pass":
                     reasons.append(f"Rule {part.name}: {verdict.reason}")
                     waiting |= verdict.state == "wait"

@@ -12,6 +12,7 @@ from urllib.parse import quote
 
 import httpx
 import jwt
+from unidiff import PatchSet
 
 from .types import Check, ChangedFile, Decision, PullRequestRef, PullRequestSnapshot, ReviewArtifact
 
@@ -48,7 +49,6 @@ class GitHubForge:
         return (
             (self.bot_login is not None and author.get("login") == self.bot_login)
             or (self.app_id is not None and str(app.get("id")) == str(self.app_id))
-            or (self.bot_login is None and author.get("type") == "Bot")
         )
 
     def _remember_comment_author(self, comment: dict) -> None:
@@ -76,16 +76,18 @@ class GitHubForge:
         now = int(time.time())
         return jwt.encode({"iat": now - 60, "exp": now + 540, "iss": self.app_id}, self.private_key, algorithm="RS256")
 
-    async def _request(self, method: str, path: str, *, bearer: str, json_data: dict | None = None, params: dict | None = None) -> Any:
+    async def _request(self, method: str, path: str, *, bearer: str, json_data: dict | None = None, params: dict | None = None, accept: str = "application/vnd.github+json") -> Any:
         response = await self.client.request(
             method, f"{self.api_url}{path}", json=json_data, params=params,
             headers={
-                "Accept": "application/vnd.github+json", "Authorization": f"Bearer {bearer}",
+                "Accept": accept, "Authorization": f"Bearer {bearer}",
                 "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "auto-merge-agent",
             },
         )
         if response.status_code >= 400:
             raise GitHubError(f"GitHub {method} {path} returned {response.status_code}: {response.text[:300]}", response.status_code)
+        if accept == "application/vnd.github.diff":
+            return response.text
         return response.json() if response.content else None
 
     async def _token(self, ref: PullRequestRef) -> str:
@@ -165,7 +167,26 @@ class GitHubForge:
 
     async def get_changed_files(self, pr: PullRequestSnapshot) -> list[ChangedFile]:
         data = await self._pages(pr.ref, f"/repos/{pr.ref.slug}/pulls/{pr.ref.number}/files")
-        return [ChangedFile(path=item["filename"], additions=item["additions"], deletions=item["deletions"], status=item["status"], patch=item.get("patch")) for item in data]
+        return [ChangedFile(path=item["filename"], previous_path=item.get("previous_filename"), additions=item["additions"], deletions=item["deletions"], status=item["status"], patch=item.get("patch")) for item in data]
+
+    async def get_complete_changed_files(self, pr: PullRequestSnapshot, files: list[ChangedFile]) -> list[ChangedFile]:
+        diff = await self._call(
+            pr.ref, "GET", f"/repos/{pr.ref.slug}/compare/{pr.base_sha}...{pr.head_sha}",
+            accept="application/vnd.github.diff",
+        )
+        patches = {patch.path: patch for patch in PatchSet(diff)}
+        complete = []
+        for file in files:
+            patch = patches.get(file.path)
+            if (not file.has_complete_patch and patch is not None and not patch.is_binary_file
+                    and patch.added == file.additions and patch.removed == file.deletions
+                    and (file.status != "renamed" or patch.source_file == f"a/{file.previous_path}")):
+                file = file.model_copy(update={
+                    "patch": "".join(str(hunk) for hunk in patch),
+                    "diff_metadata": str(patch.patch_info),
+                })
+            complete.append(file)
+        return complete
 
     async def get_repository_file(self, pr: PullRequestSnapshot, path: str) -> str | None:
         encoded_path = "/".join(quote(part, safe="") for part in path.split("/"))
@@ -205,14 +226,15 @@ class GitHubForge:
                     break
             else:
                 raise GitHubError("Check-run pagination limit exceeded")
-            latest: dict[tuple[str, str], tuple[str, Check]] = {}
+            latest: dict[tuple[str, str], tuple[int, Check]] = {}
             for item in runs:
                 source = (item.get("app") or {}).get("slug") or "unknown"
                 check = Check(name=item["name"], source=source, status=item["status"], conclusion=item.get("conclusion"), sha=sha)
-                stamp = item.get("completed_at") or item.get("started_at") or ""
+                run_id = item["id"]
                 key = (check.name, check.source)
-                if key not in latest or stamp > latest[key][0]:
-                    latest[key] = (stamp, check)
+                if key not in latest or run_id > latest[key][0]:
+                    latest[key] = (run_id, check)
+            checks.extend(pair[1] for pair in latest.values())
             statuses = await self._pages(ref, f"/repos/{ref.slug}/commits/{sha}/statuses")
             seen_contexts: set[str] = set()
             for item in statuses:
@@ -225,8 +247,7 @@ class GitHubForge:
                     status="completed" if item["state"] != "pending" else "in_progress",
                     conclusion="success" if item["state"] == "success" else item["state"], sha=sha,
                 )
-                latest[(check.name, check.source)] = (item.get("updated_at") or "", check)
-            checks.extend(pair[1] for pair in latest.values())
+                checks.append(check)
         return checks
 
     async def get_review_artifacts(self, pr: PullRequestSnapshot) -> list[ReviewArtifact]:

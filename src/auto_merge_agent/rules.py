@@ -13,6 +13,15 @@ def path_matches(path: str, pattern: str) -> bool:
     return fnmatchcase(path, pattern)
 
 
+def file_matches(file: ChangedFile, patterns: list[str]) -> bool:
+    paths = [file.path]
+    if file.status == "renamed":
+        if not file.previous_path:
+            return False
+        paths.append(file.previous_path)
+    return all(any(path_matches(path, pattern) for pattern in patterns) for path in paths)
+
+
 class RuleEvaluator(Protocol):
     def evaluate(self, rule: RuleConfig, files: list[ChangedFile]) -> GateResult: ...
 
@@ -21,7 +30,7 @@ class ChangedPathsOnly:
     def evaluate(self, rule: RuleConfig, files: list[ChangedFile]) -> GateResult:
         if files and all(
             (rule.statuses is None or file.status in rule.statuses)
-            and any(path_matches(file.path, pattern) for pattern in rule.paths)
+            and file_matches(file, rule.paths)
             for file in files
         ):
             return GateResult(state="pass", reason=f"Rule {rule.name} matched")

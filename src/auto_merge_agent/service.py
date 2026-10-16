@@ -192,7 +192,7 @@ def create_app(root: Path | None = None) -> FastAPI:
             raise HTTPException(503, "Webhook secret is not configured")
         body = await request.body()
         expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-        if not x_hub_signature_256 or not hmac.compare_digest(expected, x_hub_signature_256):
+        if not x_hub_signature_256 or not x_hub_signature_256.isascii() or not hmac.compare_digest(expected, x_hub_signature_256):
             raise HTTPException(401, "Invalid webhook signature")
         data = json.loads(body)
         repository = data.get("repository") or {}
@@ -224,9 +224,7 @@ def create_app(root: Path | None = None) -> FastAPI:
             app = comment.get("performed_via_github_app") or {}
             own_comment = (
                 own_sender or
-                (forge.app_id is not None and str(app.get("id")) == str(forge.app_id)) or
-                ((sender.get("type") == "Bot" or (comment.get("user") or {}).get("type") == "Bot")
-                 and "<!-- auto-merge-agent " in (comment.get("body") or ""))
+                (forge.app_id is not None and str(app.get("id")) == str(forge.app_id))
             )
             if own_comment:
                 return {"queued": 0}
@@ -238,10 +236,14 @@ def create_app(root: Path | None = None) -> FastAPI:
                 return {"queued": 0}
             for pr in check.get("pull_requests") or []:
                 numbers.add(pr.get("number"))
+            if not numbers and isinstance(check.get("head_sha"), str):
+                queue.enqueue_commit(owner, repo, check["head_sha"])
+                return {"queued": 1}
         elif x_github_event == "status" and isinstance(data.get("sha"), str):
             if own_sender or data.get("context") == "automerge/policy":
                 return {"queued": 0}
             queue.enqueue_commit(owner, repo, data["sha"])
+            return {"queued": 1}
         for number in numbers:
             if isinstance(number, int) and number > 0:
                 queue.enqueue(PullRequestRef(owner=owner, repo=repo, number=number))

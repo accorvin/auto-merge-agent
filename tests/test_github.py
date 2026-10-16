@@ -5,7 +5,88 @@ import httpx
 import pytest
 
 from auto_merge_agent.github import GitHubError, GitHubForge
-from auto_merge_agent.types import Decision, PullRequestRef, PullRequestSnapshot
+from auto_merge_agent.types import ChangedFile, Decision, PullRequestRef, PullRequestSnapshot
+
+
+@pytest.mark.asyncio
+async def test_complete_diff_is_pinned_and_recovers_only_matching_text_files():
+    requests = []
+    diff = "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1 +1,2 @@\n-old\n+new\n+extra\n"
+    diff += "diff --git a/image.png b/image.png\nBinary files a/image.png and b/image.png differ\n"
+    diff += "diff --git a/script.sh b/script.sh\nold mode 100644\nnew mode 100755\n"
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text=diff)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        forge = GitHubForge(token="test", client=client)
+        pr = PullRequestSnapshot(ref=PullRequestRef(owner="acme", repo="repo", number=1),
+                                 head_sha="a" * 40, base_sha="b" * 40, state="open", draft=False,
+                                 title="Test", url="https://example.com", changed_files=2)
+        original = [ChangedFile(path="main.go", status="modified", additions=2, deletions=1),
+                    ChangedFile(path="image.png", status="modified", additions=0, deletions=0),
+                    ChangedFile(path="script.sh", status="modified", additions=0, deletions=0)]
+        files = await forge.get_complete_changed_files(pr, original)
+        mismatched = await forge.get_complete_changed_files(pr, [original[0].model_copy(update={"additions": 3})])
+    assert requests[0].url.path == f"/repos/acme/repo/compare/{pr.base_sha}...{pr.head_sha}"
+    assert requests[0].headers["Accept"] == "application/vnd.github.diff"
+    assert files[0].has_complete_patch
+    assert "+extra" in files[0].patch
+    assert not files[1].has_complete_patch
+    assert files[2].has_complete_patch
+    assert "new mode 100755" in files[2].diff_metadata
+    assert not mismatched[0].has_complete_patch
+
+
+@pytest.mark.asyncio
+async def test_changed_files_preserve_rename_source():
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[{
+        "filename": "docs/new.md", "previous_filename": "src/app.py", "status": "renamed",
+        "additions": 10, "deletions": 5,
+    }]))) as client:
+        forge = GitHubForge(token="test", client=client)
+        pr = PullRequestSnapshot(ref=PullRequestRef(owner="acme", repo="repo", number=1),
+                                 head_sha="a" * 40, base_sha="b" * 40, state="open", draft=False,
+                                 title="Test", url="https://example.com", changed_files=1)
+        files = await forge.get_changed_files(pr)
+    assert files[0].previous_path == "src/app.py"
+
+
+@pytest.mark.parametrize("status_collision", [False, True])
+@pytest.mark.parametrize("new_status, new_started", [("queued", None), ("in_progress", "2026-10-09T19:00:00Z")])
+@pytest.mark.asyncio
+async def test_new_check_run_supersedes_older_success(new_status, new_started, status_collision):
+    def handler(request):
+        if request.url.path.endswith("/check-runs"):
+            return httpx.Response(200, json={"check_runs": [
+                {"id": 2, "name": "build", "app": {"slug": "github-actions"},
+                 "status": new_status, "conclusion": None, "started_at": new_started},
+                {"id": 1, "name": "build", "app": {"slug": "github-actions"},
+                 "status": "completed", "conclusion": "success", "completed_at": "2026-10-09T20:00:00Z"},
+            ]})
+        statuses = [{"context": "build", "creator": {"login": "github-actions"}, "state": "success"}] if status_collision else []
+        return httpx.Response(200, json=statuses)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        forge = GitHubForge(token="test", client=client)
+        pr = PullRequestSnapshot(ref=PullRequestRef(owner="acme", repo="repo", number=1),
+                                 head_sha="a" * 40, base_sha="b" * 40, state="open", draft=False,
+                                 title="Test", url="https://example.com", changed_files=1)
+        checks = await forge.get_checks(pr)
+    assert len(checks) == (2 if status_collision else 1)
+    assert checks[0].status == new_status
+    assert checks[0].conclusion is None
+
+
+def test_comment_marker_does_not_establish_bot_ownership():
+    forge = GitHubForge(app_id="123")
+    marker = "<!-- auto-merge-agent decision -->"
+    comment = {"body": marker, "user": {"login": "unrelated[bot]", "type": "Bot"},
+               "performed_via_github_app": {"id": 456}}
+    assert not forge._own_comment(comment, marker)
+    comment["performed_via_github_app"]["id"] = 123
+    assert forge._own_comment(comment, marker)
 
 
 @pytest.mark.asyncio
@@ -84,7 +165,7 @@ async def test_pr_checks_include_test_merge_commit():
     def handler(request):
         if request.url.path.endswith(f"/{merge}/check-runs"):
             return httpx.Response(200, json={"check_runs": [{
-                "name": "demo-ci", "app": {"slug": "github-actions"},
+                "id": 1, "name": "demo-ci", "app": {"slug": "github-actions"},
                 "status": "completed", "conclusion": "success", "completed_at": "2026-10-09T20:00:00Z",
             }]})
         if request.url.path.endswith("/check-runs"):

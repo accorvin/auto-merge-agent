@@ -56,7 +56,7 @@ The config checkout is the repository allowlist. After signature verification, t
 
 The webhook service refuses to start if `GITHUB_TOKEN` is set; it must authenticate as the App installation. The `poll` command uses `GITHUB_TOKEN` or the local `gh` login. The `evaluate` command also accepts `GITHUB_TOKEN`. Provide credentials through your deployment's secret store and never commit them.
 
-The service learns its bot login from the first comment it creates or finds and shares it across webhook handling and later comment updates. Before then, it identifies its own events by App ID and comment marker.
+The service learns its bot login from the first comment it creates or identifies by App ID and shares it across webhook handling and later comment updates. Before then, App ID establishes ownership; a comment marker from an unrelated bot is not proof of ownership.
 
 ```bash
 cd /path/to/auto-merge-agent

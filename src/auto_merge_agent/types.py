@@ -236,10 +236,22 @@ class PullRequestSnapshot(StrictModel):
 
 class ChangedFile(StrictModel):
     path: str
+    previous_path: str | None = None
     additions: int
     deletions: int
     status: str
     patch: str | None = None
+    diff_metadata: str | None = None
+
+    @property
+    def has_complete_patch(self) -> bool:
+        if self.patch is None:
+            return False
+        lines = self.patch.split("\n")
+        return (
+            sum(line.startswith("+") for line in lines) == self.additions
+            and sum(line.startswith("-") for line in lines) == self.deletions
+        )
 
 
 class Check(StrictModel):

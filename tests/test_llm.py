@@ -4,7 +4,21 @@ import pytest
 
 from auto_merge_agent.config import ConfigStore
 from auto_merge_agent.llm import ComplexityAnswer, LangChainJudge, SafetyAnswer
-from auto_merge_agent.types import ChangedFile
+from auto_merge_agent.types import ChangedFile, RuleConfig
+
+
+@pytest.mark.asyncio
+async def test_truncated_patch_is_not_sent_to_model(monkeypatch):
+    judge = LangChainJudge(["test"])
+
+    async def unexpected(*args):
+        pytest.fail("Incomplete evidence must not reach the model")
+
+    monkeypatch.setattr(judge, "_ask", unexpected)
+    rule = RuleConfig(name="safe", type="llm_custom", model="test", prompt="Safe?")
+    file = ChangedFile(path="main.go", status="modified", additions=2, deletions=1,
+                       patch="@@ -1 +1 @@\n-old\n+new")
+    assert (await judge.evaluate(rule, [file], "", "")).state == "reject"
 
 
 @pytest.mark.asyncio
@@ -68,9 +82,10 @@ async def test_repository_context_reaches_both_model_calls(monkeypatch):
     monkeypatch.setattr(judge, "_ask", answer)
     for rule in rules[1:]:
         verdict = await judge.evaluate(
-            rule, [ChangedFile(path="main.go", status="modified", additions=1, deletions=1, patch="diff")],
+            rule, [ChangedFile(path="main.go", status="modified", additions=1, deletions=1, patch="@@ -1 +1 @@\n-old\n+new", diff_metadata="old mode 100644\nnew mode 100755")],
             "Fix", "", {"repository/AGENTS.md": "Check API compatibility"},
         )
         assert verdict.state == "pass"
     assert [schema for schema, _ in calls] == [ComplexityAnswer, SafetyAnswer]
     assert all("Check API compatibility" in user for _, user in calls)
+    assert all("new mode 100755" in user for _, user in calls)
