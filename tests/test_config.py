@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from auto_merge_agent.config import ConfigError, ConfigStore
+from auto_merge_agent.rule_order import rule_order_errors
 
 
 def write(path: Path, text: str):
@@ -90,6 +91,49 @@ rules:
 """)
     loaded = ConfigStore(tmp_path).load("github.com", "acme", "repo")
     assert [rule.name for rule in loaded.policy.rules] == ["before", "go-mod", "go-sum", "after"]
+
+
+def test_rule_order_check_uses_expanded_profiles(tmp_path):
+    setup_config(tmp_path)
+    write(tmp_path / "profiles/go-deps.yaml", """schema_version: 1
+rules:
+  - {name: model, type: llm_complexity, model: gpt-6-sol, max: low}
+""")
+    write(tmp_path / "configs/github.com/acme/repo/config.yaml", """schema_version: 1
+rules:
+  - {profile: go-deps}
+  - {name: docs, type: changed_paths_only, paths: ["docs/**"]}
+""")
+    rules = ConfigStore(tmp_path).load("github.com", "acme", "repo").policy.rules
+    assert rule_order_errors(rules, "github.com/acme/repo") == [
+        "github.com/acme/repo: static rule 'docs' follows LLM rule 'model'"
+    ]
+
+
+def test_rule_order_check_covers_groups_and_valid_order(tmp_path):
+    setup_config(tmp_path)
+    path = tmp_path / "configs/github.com/acme/repo/config.yaml"
+    write(path, """schema_version: 1
+rules:
+  - {name: docs, type: changed_paths_only, paths: ["docs/**"]}
+  - name: maintenance
+    all:
+      - {name: model, type: llm_complexity, model: gpt-6-sol, max: low}
+      - {name: paths, type: changed_paths_only, paths: [README.md]}
+""")
+    store = ConfigStore(tmp_path)
+    rules = store.load("github.com", "acme", "repo").policy.rules
+    assert rule_order_errors(rules, "github.com/acme/repo") == [
+        "github.com/acme/repo, group 'maintenance': static rule 'paths' follows LLM rule 'model'"
+    ]
+    write(path, path.read_text().replace(
+        "      - {name: model, type: llm_complexity, model: gpt-6-sol, max: low}\n"
+        "      - {name: paths, type: changed_paths_only, paths: [README.md]}",
+        "      - {name: paths, type: changed_paths_only, paths: [README.md]}\n"
+        "      - {name: model, type: llm_complexity, model: gpt-6-sol, max: low}",
+    ))
+    rules = store.load("github.com", "acme", "repo").policy.rules
+    assert rule_order_errors(rules, "github.com/acme/repo") == []
 
 
 @pytest.mark.parametrize("relative, content", [

@@ -91,7 +91,7 @@ rules:
     authors: ["file-sync[bot]"]
 ```
 
-Each rule has one criterion: `changed_paths_only`, `llm_complexity`, or `llm_custom`. Give every rule and `all` group a unique `name`; it appears in decisions and checklists. Entries in `rules` are alternatives; any one may qualify a PR. To reuse a policy, add `- profile: go-dependencies` as an entry. The agent replaces that entry with the rules in `profiles/go-dependencies.yaml`; each expanded rule is an alternative. Profile files contain rules or `all` groups and cannot reference other profiles. Put multiple separate rules in an `all` group when every criterion must pass. This makes the required relationship explicit. A passing static alternative skips LLM calls. For example:
+Each rule has one criterion: `changed_paths_only`, `llm_complexity`, or `llm_custom`. Give every rule and `all` group a unique `name`; it appears in decisions and checklists. Entries in `rules` are alternatives; any one may qualify a PR. To reuse a policy, add `- profile: go-dependencies` as an entry. The agent replaces that entry with the rules in `profiles/go-dependencies.yaml`; each expanded rule is an alternative. Profile files contain rules or `all` groups and cannot reference other profiles. Put multiple separate rules in an `all` group when every criterion must pass. This makes the required relationship explicit. A passing static alternative skips LLM calls. List static alternatives before LLM alternatives, and static members before LLM members in an `all` group. CI checks this order in effective repository policies after profile expansion. For example:
 
 ```yaml
 rules:
