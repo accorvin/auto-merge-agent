@@ -52,6 +52,12 @@ def _parts(rule: EligibilityRule) -> list[RuleConfig]:
     return rule.all if isinstance(rule, AllRulesConfig) else [rule]
 
 
+def _author_matches(rule: EligibilityRule, author: str, trusted_authors: list[str]) -> bool:
+    explicit = [part.authors for part in _parts(rule) if part.authors is not None]
+    login = author.lower()
+    return all(any(login == allowed.lower() for allowed in authors) for authors in explicit) if explicit else login in trusted_authors
+
+
 def _uses_llm(rule: EligibilityRule) -> bool:
     return any(part.type in ("llm_complexity", "llm_custom") for part in _parts(rule))
 
@@ -115,8 +121,8 @@ class EvaluationEngine:
             return result("human_review", "Automerge is disabled for this repository")
         if pr.state != "open" or pr.draft:
             return result("human_review", "PR is closed or draft")
-        if pr.author_login.lower() not in config.trusted_authors:
-            return result("human_review", f"PR author @{pr.author_login or 'unknown'} is not a trusted author")
+        if not any(_author_matches(rule, pr.author_login, config.trusted_authors) for rule in config.policy.rules):
+            return result("human_review", f"PR author @{pr.author_login or 'unknown'} is not a trusted author for any eligibility rule")
         blocked = [label for label in pr.labels if label.lower().startswith("do-not-merge") or label.lower() in {"hold", "work-in-progress", "needs-ok-to-test", "needs-rebase"}]
         if blocked:
             return result("human_review", f"PR has blocking label: {blocked[0]}")
@@ -148,7 +154,6 @@ class EvaluationEngine:
                 return result("human_review", f"Review finding {finding.severity.value} exceeds {config.policy.review.max_finding_severity.value}: {finding.url}")
         passed = [
             f"PR open, ready, mergeable, and free of blocking labels or human change requests",
-            f"Trusted author @{pr.author_login}",
             f"Changed-file list complete: {len(files)} files",
             f"Changed lines: {counted}" + (f" <= repository limit {max_lines}" if max_lines is not None else ""),
         ]
@@ -166,13 +171,17 @@ class EvaluationEngine:
         )
         matching = [
             rule for rule in config.policy.rules
-            if all(rule_evaluator(part.type).evaluate(part, files).state == "pass" for part in _parts(rule))
+            if _author_matches(rule, pr.author_login, config.trusted_authors)
+            and all(rule_evaluator(part.type).evaluate(part, files).state == "pass" for part in _parts(rule))
         ]
         if not matching:
             return result("human_review", "No eligibility rule matched")
         no_llm = next((rule for rule in matching if not _uses_llm(rule)), None)
         if no_llm:
-            return result("eligible", f"Rule {no_llm.name} matched", no_llm.name, passed + [f"Static eligibility rule {no_llm.name} matched"])
+            return result("eligible", f"Rule {no_llm.name} matched", no_llm.name, passed + [
+                f"Author @{pr.author_login} allowed by eligibility rule {no_llm.name}",
+                f"Static eligibility rule {no_llm.name} matched",
+            ])
         return {"candidates": matching, "passed_checks": passed}
 
     async def _llm(self, state: EvaluationState) -> dict[str, Any]:
@@ -240,7 +249,10 @@ class EvaluationEngine:
                     break
                 llm_checks.extend(verdict.passed_checks or [f"LLM criterion {part.name} passed ({part.model})"])
             else:
-                checklist = state["passed_checks"] + cap_checks[rule.name] + llm_checks + [f"Eligibility rule {rule.name} matched"]
+                checklist = state["passed_checks"] + cap_checks[rule.name] + llm_checks + [
+                    f"Author @{pr.author_login} allowed by eligibility rule {rule.name}",
+                    f"Eligibility rule {rule.name} matched",
+                ]
                 return {"decision": Decision(state="eligible", head_sha=pr.head_sha, reasons=[f"Rule {rule.name} passed"], matched_rule=rule.name, config_revision=config.revision, passed_checks=checklist)}
         return {"decision": Decision(state="waiting" if waiting else "human_review", head_sha=pr.head_sha, reasons=reasons, config_revision=config.revision)}
 

@@ -146,3 +146,44 @@ async def test_drive_by_author_cannot_merge_even_when_other_gates_pass(tmp_path)
     assert result.state == "human_review"
     assert "not a trusted author" in result.reasons[0]
     assert forge.merges == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("author, expected", [
+    ("FILE-SYNC[bot]", "eligible"),
+    ("alice", "human_review"),
+])
+async def test_rule_authors_override_repository_trusted_authors(tmp_path, author, expected):
+    store = make_store(tmp_path)
+    repo = tmp_path / "configs/github.com/acme/repo"
+    (repo / "OWNERS").write_text("approvers: [alice]\n")
+    (repo / "config.yaml").write_text("""schema_version: 1
+enabled: true
+ci: {expected: [{name: build}]}
+rules:
+  - name: bot-go
+    type: changed_paths_only
+    paths: [go.mod, go.sum]
+    authors: ['file-sync[bot]', other-bot]
+""")
+    forge = Forge()
+    forge.author = author
+    _, decision = await EvaluationEngine(store, forge, Reviewer()).evaluate(PullRequestRef(owner="acme", repo="repo", number=1))
+    assert decision.state == expected
+    assert decision.matched_rule == ("bot-go" if expected == "eligible" else None)
+
+
+@pytest.mark.asyncio
+async def test_other_rule_can_match_when_author_restricted_rule_does_not(tmp_path):
+    store = make_store(tmp_path)
+    repo = tmp_path / "configs/github.com/acme/repo/config.yaml"
+    repo.write_text("""schema_version: 1
+enabled: true
+ci: {expected: [{name: build}]}
+rules:
+  - {name: bot-go, type: changed_paths_only, paths: [go.mod, go.sum], authors: [sync-bot]}
+  - {name: maintainer-go, type: changed_paths_only, paths: [go.mod, go.sum]}
+""")
+    _, decision = await EvaluationEngine(store, Forge(), Reviewer()).evaluate(PullRequestRef(owner="acme", repo="repo", number=1))
+    assert decision.state == "eligible"
+    assert decision.matched_rule == "maintainer-go"

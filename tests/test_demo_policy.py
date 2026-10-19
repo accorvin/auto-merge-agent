@@ -17,6 +17,7 @@ REF = PullRequestRef(owner="mprahl", repo="test-automerge", number=1)
 class DemoForge:
     def __init__(self, files: list[ChangedFile]):
         self.files = files
+        self.author = "mprahl"
         self.repository_files = {}
         self.context_requests = []
         self.diff_requests = 0
@@ -28,7 +29,7 @@ class DemoForge:
 
     async def get_pull_request(self, ref):
         return PullRequestSnapshot(
-            ref=ref, author_login="mprahl", head_sha="a" * 40, base_sha="b" * 40,
+            ref=ref, author_login=self.author, head_sha="a" * 40, base_sha="b" * 40,
             state="open", draft=False, title="Demo", url="https://example.com",
             changed_files=len(self.files),
         )
@@ -218,6 +219,39 @@ rules:
     assert result.state == "human_review"
     assert "llm_custom limit 5 exceeded" in result.reasons[0]
     assert judge.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_author_restriction_inside_all_group_skips_llm_for_other_trusted_authors(tmp_path):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/global.yaml").write_text((ROOT / "config/global.yaml").read_text())
+    repo_dir = tmp_path / "configs/github.com/mprahl/test-automerge"
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "OWNERS").write_text("approvers: [mprahl]\n")
+    (repo_dir / "config.yaml").write_text("""schema_version: 1
+enabled: true
+ci: {expected: [{name: lint, source: github-actions}], ignore: [{name: CodeRabbit}]}
+rules:
+  - name: bot-generated
+    all:
+      - {name: generated-path, type: changed_paths_only, paths: [generated/synced.yaml]}
+      - name: generated-safety
+        type: llm_custom
+        authors: ['file-sync[bot]']
+        model: gpt-6-sol
+        prompt: "Is this safe?"
+""")
+    forge = DemoForge([file("generated/synced.yaml")])
+    judge = DemoJudge()
+    engine = EvaluationEngine(ConfigStore(tmp_path), forge, DemoReviewer(), judge)
+    _, rejected = await engine.evaluate(REF)
+    assert rejected.state == "human_review"
+    assert judge.calls == 0
+    forge.author = "FILE-SYNC[bot]"
+    _, accepted = await engine.evaluate(REF)
+    assert accepted.state == "eligible"
+    assert accepted.matched_rule == "bot-generated"
+    assert judge.calls == 1
 
 
 @pytest.mark.asyncio

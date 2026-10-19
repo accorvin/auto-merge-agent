@@ -52,7 +52,7 @@ Replace the CI check name and owner login with values from the target repo. `ena
 | --- | --- |
 | `schema_version` | Required; currently `1`. |
 | `enabled` | Opt a repo into evaluation for automerge. Defaults to `false`. |
-| `trusted_authors` | Optional list of GitHub logins that replaces the repo directory's `OWNERS.approvers`. Omit or set `null` to use those approvers. |
+| `trusted_authors` | Optional default list of GitHub logins that replaces the repo directory's `OWNERS.approvers`. Omit or set `null` to use those approvers. A rule's `authors` list overrides this default for that rule. |
 | `review.plugin` | Reviewer adapter. Currently `coderabbit`. |
 | `review.max_merge_risk` | Highest allowed reviewer risk: `minimal`, `low`, `moderate`, `high`, or `critical`. Default `moderate`. |
 | `review.max_finding_severity` | Highest allowed finding: `info`, `low`, `medium`, `high`, or `critical`. Default `medium`. |
@@ -80,6 +80,16 @@ CodeRabbit may report a commit status as well as a review. If present and not ig
 ## Eligibility rules
 
 The built-in `changed_paths_only` rule requires every changed file to match one of its `paths` patterns. For renames, both the old and new paths must match; missing old-path metadata fails the path rule. Both paths must also match `limits.exclude_from_line_count` for a rename to be excluded. These path checks also apply to scoped LLM rules. Optional `statuses` restricts file operations such as `modified` or `added`. Patterns use shell-style matching; `docs/**` matches files under `docs/`. The included `go-dependencies` profile allows modified `go.mod` and `go.sum` paths. It checks file paths and statuses, not dependency-version semantics; the mandatory CI and reviewer gates still apply.
+
+Any rule may set `authors` to a nonempty list of GitHub logins. For that rule, this list replaces the repository-wide `trusted_authors` or `OWNERS.approvers` author list; it does not need to be a subset. A rule without `authors` uses the repository-wide list. Matching is case-insensitive. This also works for LLM rules and rules inside an `all` group; if several members of an `all` group specify `authors`, the PR author must appear in every list. A mismatched rule does not call the model. For example, to automerge changes to a synced file only from its bot account:
+
+```yaml
+rules:
+  - name: bot-synced-file
+    type: changed_paths_only
+    paths: [generated/synced.yaml]
+    authors: ["file-sync[bot]"]
+```
 
 Each rule has one criterion: `changed_paths_only`, `llm_complexity`, or `llm_custom`. Give every rule and `all` group a unique `name`; it appears in decisions and checklists. Entries in `rules` are alternatives; any one may qualify a PR. To reuse a policy, add `- profile: go-dependencies` as an entry. The agent replaces that entry with the rules in `profiles/go-dependencies.yaml`; each expanded rule is an alternative. Profile files contain rules or `all` groups and cannot reference other profiles. Put multiple separate rules in an `all` group when every criterion must pass. This makes the required relationship explicit. A passing static alternative skips LLM calls. For example:
 

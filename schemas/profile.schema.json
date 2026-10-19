@@ -27,6 +27,22 @@
     "RuleConfig": {
       "additionalProperties": false,
       "properties": {
+        "authors": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authors"
+        },
         "max": {
           "anyOf": [
             {

@@ -163,6 +163,20 @@ rules:
         ConfigStore(tmp_path).load("github.com", "acme", "repo")
 
 
+@pytest.mark.parametrize("authors", ["[]", "['@team']", "['org/team']", "['']"])
+def test_rule_authors_must_be_nonempty_github_logins(tmp_path, authors):
+    setup_config(tmp_path)
+    write(tmp_path / "configs/github.com/acme/repo/config.yaml", f"""schema_version: 1
+rules:
+  - name: bot-file
+    type: changed_paths_only
+    paths: [generated/synced.yaml]
+    authors: {authors}
+""")
+    with pytest.raises(ConfigError):
+        ConfigStore(tmp_path).load("github.com", "acme", "repo")
+
+
 def test_rule_cannot_mix_criteria_and_group_names_must_be_unique(tmp_path):
     setup_config(tmp_path)
     path = tmp_path / "configs/github.com/acme/repo/config.yaml"

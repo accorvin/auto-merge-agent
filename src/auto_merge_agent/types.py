@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Annotated, Any, Literal
 
@@ -57,11 +58,19 @@ class RuleConfig(StrictModel):
     type: str
     paths: list[str] = Field(default_factory=list)
     statuses: list[Literal["modified", "added", "removed", "renamed", "copied", "changed", "unchanged"]] | None = None
+    authors: list[str] | None = Field(default=None, min_length=1)
     model: str | None = None
     max: Literal["low", "medium", "high"] | None = None
     prompt: str | None = None
     max_changed_lines: int | None = Field(default=None, ge=0)
     options: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("authors")
+    @classmethod
+    def validate_authors(cls, authors: list[str] | None) -> list[str] | None:
+        if authors is not None and any(not re.fullmatch(r"[A-Za-z0-9-]+(?:\[bot\])?", author) for author in authors):
+            raise ValueError("Rule authors must be GitHub logins, not teams or OWNERS aliases")
+        return authors
 
     @model_validator(mode="after")
     def validate_builtin(self) -> RuleConfig:

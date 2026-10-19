@@ -98,7 +98,7 @@ For another config location, put `--config-root /path/to/policies` before `poll`
 
 The agent checks every PR in this order:
 
-1. **Mandatory gates:** The PR is open, ready, mergeable, and from a trusted author. Its file list is complete, its size is within the repo limit, and no blocking label or human change request is present. Configured CI checks pass, at least one real CI check succeeds, and CodeRabbit has reviewed the latest head SHA.
+1. **Mandatory gates:** The PR is open, ready, mergeable, and its author is allowed by a matching rule (using the repository-wide trusted-author list by default). Its file list is complete, its size is within the repo limit, and no blocking label or human change request is present. Configured CI checks pass, at least one real CI check succeeds, and CodeRabbit has reviewed the latest head SHA.
 2. **One eligibility rule:** Top-level rules are alternatives. A static rule can allow a Go dependency bump without an LLM. An `all` group can require a path rule, a complexity rule, and a custom safety rule together. If a static rule passes, the LLM is skipped.
 3. **Final recheck:** Before merging, the agent reruns the policy and confirms the head and base have not changed. Missing evidence, an unrecognized review, or a model error prevents an automatic merge.
 
