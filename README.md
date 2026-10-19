@@ -184,7 +184,7 @@ rules:
 
 Replace `maintainer` and `tests` with the repository's GitHub login and CI check. The `go-dependencies` profile expands to a static rule for modified `go.mod` and `go.sum` files. Both alternatives require a trusted author, passing CI, and a current-head CodeRabbit review. If CodeRabbit also posts a status, that status must pass. A PR changing only `go.mod` and `go.sum` uses the static rule and skips the LLM, even though `small-maintenance` also matches. Other matching changes must pass both LLM criteria.
 
-See [configuration](docs/configuration.md) for inheritance, every policy field, and decision semantics. The checked-in policy under `configs/` is another example.
+See [configuration](docs/configuration.md) for inheritance, every policy field, and decision semantics. Its [policy recipes](docs/configuration.md#policy-recipes) show Python dependency updates from Dependabot, small changes outside an auth package, and low-complexity changes that preserve the public API. The checked-in policy under `configs/` is another example.
 
 JSON Schemas for [global](schemas/global.schema.json) and [org/repo](schemas/repository.schema.json) YAML provide editor completion. `validate-config` checks cross-file requirements such as model allowlisting and expected CI checks. Regenerate schemas after changing config models with `uv run python scripts/generate_schemas.py`.
 

@@ -130,6 +130,80 @@ Target-repository files are read at the PR's base commit. This keeps a PR from c
 
 Model IDs are listed directly in `config/global.yaml:allowed_models`. A repo may select only an allowed ID. LangChain infers providers for recognized model names; use the same `provider:model-id` string in both places when provider inference is ambiguous. OpenAI models require `OPENAI_API_KEY` at runtime. Do not store API keys in YAML.
 
+## Policy recipes
+
+Use each `rules:` block below in a repository's `config.yaml`. The repository also needs `schema_version: 1`, `enabled: true`, an expected CI check, and an `OWNERS` file with trusted approvers, as shown in the [minimal repo policy](#minimal-repo-policy). The examples use `gpt-6-sol`, which must be in `config/global.yaml:allowed_models`. Replace paths and the CI check with those for your repository. The mandatory CI and CodeRabbit gates still apply to every recipe.
+
+### Python dependency updates from Dependabot
+
+This group first checks the PR author and changed files, then asks the model whether the diff is a dependency update. Both `pyproject.toml` and `uv.lock` are allowed, but a PR may change just one of them. The static path check alone would also match unrelated edits to `pyproject.toml`.
+
+```yaml
+rules:
+  - name: dependabot-python-dependencies
+    all:
+      - name: dependabot-python-files
+        type: changed_paths_only
+        authors: ["dependabot[bot]"]
+        paths: [pyproject.toml, uv.lock]
+        statuses: [modified]
+      - name: dependency-update-only
+        type: llm_custom
+        model: gpt-6-sol
+        prompt: >-
+          Approve only dependency version updates and the corresponding lockfile
+          changes. Reject edits to project settings, build scripts, application
+          code, or unrelated metadata. If the diff does not establish that this
+          is a dependency update, return safe_to_merge=false.
+```
+
+The repository-wide `limits.max_changed_lines` still applies; its default is 200 additions plus deletions. Set a suitable repo limit if expected lockfile updates exceed it. The custom check is an LLM judgment about the diff, so inspect its shadow-mode decisions before enabling merges.
+
+### Low complexity outside the auth package, under 100 lines
+
+Use an allowlist of directories that can be merged automatically. This example's paths deliberately omit `src/widget/auth/**`, so touching or renaming a file into or out of that package fails the static path rule. Adapt the list to your package layout.
+
+```yaml
+rules:
+  - name: small-non-auth-change
+    all:
+      - name: non-auth-paths
+        type: changed_paths_only
+        paths: ["src/widget/core/**", "src/widget/cli/**", "tests/**"]
+      - name: non-auth-complexity
+        type: llm_complexity
+        model: gpt-6-sol
+        max: low
+        max_changed_lines: 99
+```
+
+`max_changed_lines: 99` means fewer than 100 additions plus deletions. Path patterns are allowlists; there is no negative glob to exclude one directory from an otherwise unrestricted tree.
+
+### Low complexity without public API changes, under 200 lines
+
+The complexity and public API criteria are separate LLM checks. The custom criterion should describe what counts as a public API in your repository; this example includes exported symbols and documented interfaces.
+
+```yaml
+rules:
+  - name: small-internal-change
+    all:
+      - name: internal-complexity
+        type: llm_complexity
+        model: gpt-6-sol
+        max: low
+        max_changed_lines: 199
+      - name: unchanged-public-api
+        type: llm_custom
+        model: gpt-6-sol
+        max_changed_lines: 199
+        prompt: >-
+          Return safe_to_merge=false if the change alters exported symbols,
+          public function signatures, documented interfaces, or other public
+          behavior promised to callers. If the impact is unclear, return false.
+```
+
+`max_changed_lines: 199` means fewer than 200 additions plus deletions. A public API judgment depends on the diff and repository guidance; add `context.md` or `llm_context_files` if the API boundary needs more explanation. With multiple top-level rules, any one can qualify a PR, so keep related requirements inside the same `all` group.
+
 ## Decision states
 
 | State | Example cause | Active-mode GitHub output |
