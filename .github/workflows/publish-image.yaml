@@ -1,5 +1,14 @@
 name: Publish image
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - Containerfile
+      - .dockerignore
+      - pyproject.toml
+      - uv.lock
+      - src/**
   workflow_dispatch:
 permissions:
   contents: read

@@ -44,11 +44,14 @@ other branches cannot obtain a Quay push token. The workflow requests the `quay`
 audience and exchanges the GitHub OIDC token for Quay's short-lived robot token
 only while publishing.
 
-Run **Publish image** manually on `main`. It runs the entire CI workflow, then
-pushes the exact tested linux/amd64 image as `sha-<full-commit-sha>`. It does not
-rebuild after testing, publish from PRs, or deploy to a cluster. Ordinary CI needs
-no Quay credentials. For other CPU architectures, build and test separately.
-Prefer a digest reference for deployments; tags can be overwritten in a registry.
+When a push to `main` changes a runtime image input (`Containerfile`,
+`.dockerignore`, `pyproject.toml`, `uv.lock`, or `src/`), **Publish image** runs
+the entire CI workflow and then pushes the exact tested linux/amd64 image as
+`sha-<full-commit-sha>`. It does not publish from PRs or deploy to a cluster.
+You can also run it manually on `main` to deliberately republish a commit.
+Ordinary CI needs no Quay credentials. For other CPU architectures, build and
+test separately. Prefer a digest reference for deployments; tags can be
+overwritten in a registry.
 
 ## Prepare policies and Kustomize artifacts
 
@@ -215,8 +218,9 @@ or model calls. Application unit tests cover evaluation and merge behavior.
 
 `CI complete` is the aggregate check suitable for branch protection. Failing jobs
 retain test reports, rendered manifests, or cluster logs/events; Secret values
-are excluded. The image artifact is retained for one day. Publishing is manual,
-restricted to `main`, and gated on the same full test suite.
+are excluded. The image artifact is retained for one day. Publishing is automatic
+for runtime-input changes on `main` (and may be run manually there), restricted
+to `main`, and gated on the same full test suite.
 
 To reproduce the cluster smoke test locally with Docker, kind 0.31.0,
 Kustomize 5.6.0, kubectl, and uv installed:
