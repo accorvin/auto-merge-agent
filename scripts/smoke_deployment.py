@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import secrets
 from pathlib import Path
 import shutil
 import subprocess
@@ -20,7 +21,8 @@ import yaml
 from prepare_deployment import prepare, REPO_ROOT
 
 NAMESPACE = "auto-merge-agent"
-WEBHOOK_SECRET = "ephemeral-kind-test-secret"
+# Ephemeral per-run secret; generated, never stored in the repository.
+WEBHOOK_SECRET = secrets.token_urlsafe(32)
 
 
 def run(*args: str, input: str | None = None, timeout: int = 180) -> str:
@@ -106,6 +108,9 @@ def check_http():
 
 
 def main():
+    context = run("kubectl", "config", "current-context", timeout=30).strip()
+    if not context.startswith("kind-"):
+        raise SystemExit(f"Refusing to run against non-kind context: {context}")
     image = sys.argv[1] if len(sys.argv) > 1 else "auto-merge-agent:ci"
     with tempfile.TemporaryDirectory(prefix="automerge-smoke-") as tmp:
         root = Path(tmp)
@@ -125,6 +130,9 @@ def main():
         }
         kubectl("apply", "-f", "-", input=yaml.safe_dump(secret))
         original = apply_rendered(first)
+        # GITHUB_WEBHOOK_SECRET is env-injected, so a rerun against an existing
+        # cluster must restart the pod to pick up the newly generated secret.
+        kubectl("rollout", "restart", "deployment/auto-merge-agent")
         pod = rollout()
         first_uid = pod["metadata"]["uid"]
         print("PASS: init validation, probes, Service, and restricted pod admission", flush=True)

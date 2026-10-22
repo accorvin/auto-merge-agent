@@ -77,7 +77,8 @@ a separate checkout. Use a reviewed, protected revision, not the PR being evalua
 The helper snapshots root `OWNERS`, `config/global.yaml`, all profiles, selected
 owner defaults, selected repository policies/OWNERS, and optional `context.md`.
 It validates that snapshot and rejects symlinks, missing files, and bundles over
-900 KB. It copies the manifests and snapshot into a self-contained directory,
+200 KB (the client-side apply annotation limit). It copies the manifests and
+snapshot into a self-contained directory,
 so normal Kustomize load restrictions work. It refuses to overwrite existing
 output; use a new directory for each revision. No policy YAML is duplicated in
 the maintained deployment sources.

@@ -80,7 +80,7 @@ def test_symlink_escape_rejected(policy, tmp_path):
 
 def test_oversized_bundle_rejected(policy, tmp_path):
     (policy / "OWNERS").write_text("#" * (module.MAX_POLICY_BYTES + 1))
-    with pytest.raises(ValueError, match="900 KB"):
+    with pytest.raises(ValueError, match=f"{module.MAX_POLICY_BYTES // 1000} KB"):
         prepare(policy, tmp_path)
 
 

@@ -12,16 +12,20 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  id-token: write
 concurrency:
   group: quay-publish-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   ci:
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci.yaml
   publish:
     needs: ci
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

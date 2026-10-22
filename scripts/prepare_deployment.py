@@ -13,7 +13,9 @@ import yaml
 from auto_merge_agent.config import ConfigStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MAX_POLICY_BYTES = 900_000  # Leave room below the ConfigMap API limit for keys/metadata.
+# `kubectl apply` copies the whole ConfigMap into the 256 KiB last-applied
+# annotation; stay well below it to leave room for JSON-escaping overhead.
+MAX_POLICY_BYTES = 200_000
 
 
 def selected_files(root: Path, repositories: list[str]) -> list[Path]:
@@ -77,7 +79,9 @@ def prepare(root: Path, output: Path, repositories: list[str], image: str) -> Pa
             data = (root / path).read_text(encoding="utf-8")
             total += len(data.encode("utf-8")) + 69  # file- plus SHA-256 key
             if total > MAX_POLICY_BYTES:
-                raise ValueError("Selected policies exceed the 900 KB ConfigMap budget")
+                raise ValueError(
+                    f"Selected policies exceed the {MAX_POLICY_BYTES // 1000} KB ConfigMap budget"
+                )
             target = snapshot / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(data, encoding="utf-8")
