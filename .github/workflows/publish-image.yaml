@@ -37,4 +37,4 @@ jobs:
           docker load --input "$RUNNER_TEMP/image/auto-merge-agent.tar"
           docker tag auto-merge-agent:ci "$QUAY_IMAGE:sha-$GITHUB_SHA"
           docker push "$QUAY_IMAGE:sha-$GITHUB_SHA"
-          printf 'Published `%s:sha-%s`\n' "$QUAY_IMAGE" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Published %s:sha-%s\n' "$QUAY_IMAGE" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
