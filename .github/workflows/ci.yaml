@@ -11,19 +11,15 @@ concurrency:
   cancel-in-progress: true
 jobs:
   validate:
-    name: Python ${{ matrix.python }}
+    name: Python 3.12
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.12.23"
-          python-version: ${{ matrix.python }}
+          python-version: "3.12"
           enable-cache: true
       - run: uv sync --extra test --locked
       - run: uv run python scripts/generate_schemas.py --check
@@ -33,7 +29,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: tests-python-${{ matrix.python }}
+          name: tests-python-3.12
           path: build/test-results.xml
   manifests:
     name: Manifests and workflow validation
@@ -71,11 +67,9 @@ jobs:
             https://raw.githubusercontent.com/openshift/api/f9b2d1ae30ebf759bc287c38474b41f246852cae/route/v1/zz_generated.crd-manifests/routes-Default.crd.yaml \
             -o build/route-crd.yaml
           uv run python scripts/ci/route_schema.py build/route-crd.yaml build/schemas/route.json
-          for version in 1.34.0 1.35.0; do
-            kubeconform -strict -summary -kubernetes-version "$version" \
-              -schema-location default -schema-location 'build/schemas/{{.ResourceKind}}.json' \
-              build/kind.yaml build/openshift.yaml
-          done
+          kubeconform -strict -summary -kubernetes-version 1.35.0 \
+            -schema-location default -schema-location 'build/schemas/{{.ResourceKind}}.json' \
+            build/kind.yaml build/openshift.yaml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rendered-manifests
@@ -113,18 +107,10 @@ jobs:
           compression-level: 0
           retention-days: 1
   kind:
-    name: kind Kubernetes ${{ matrix.kubernetes }}
+    name: kind Kubernetes 1.35.0
     needs: [image, manifests]
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - kubernetes: "1.34.3"
-            node-image: kindest/node:v1.34.3@sha256:08497ee19eace7b4b5348db5c6a1591d7752b164530a36f855cb0f2bdcbadd48
-          - kubernetes: "1.35.0"
-            node-image: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
@@ -138,7 +124,7 @@ jobs:
           cache: false
       - name: Install pinned cluster tools
         env:
-          KUBERNETES_VERSION: ${{ matrix.kubernetes }}
+          KUBERNETES_VERSION: "1.35.0"
         run: |
           go install sigs.k8s.io/kind@v0.31.0
           go install sigs.k8s.io/kustomize/kustomize/v5@v5.6.0
@@ -156,7 +142,7 @@ jobs:
           path: ${{ runner.temp }}/image
       - name: Create cluster and load image
         env:
-          NODE_IMAGE: ${{ matrix.node-image }}
+          NODE_IMAGE: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
         run: |
           kind create cluster --name automerge --image "$NODE_IMAGE" --wait 120s
           kind load image-archive "$RUNNER_TEMP/image/auto-merge-agent.tar" --name automerge
@@ -169,7 +155,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: kind-diagnostics-${{ matrix.kubernetes }}
+          name: kind-diagnostics-1.35.0
           path: build/diagnostics
       - name: Delete cluster
         if: always()

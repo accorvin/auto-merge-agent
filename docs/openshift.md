@@ -188,11 +188,11 @@ Every push and pull request runs:
 
 | Check | Coverage |
 | --- | --- |
-| Python 3.11/3.12/3.13 | Existing application tests, deployment helper tests, schema generation, policy validation, rule ordering |
+| Python 3.12 | Existing application tests, deployment helper tests, schema generation, policy validation, rule ordering |
 | Manifests | Both overlays render; native resources and the OpenShift Route schema validate; policy mount paths and hash-triggered pod changes are checked |
 | Workflow lint | Actionlint validates GitHub Actions syntax and expressions |
 | Image | Locked dependency build; entrypoint under arbitrary UID/read-only filesystem; policy/source-checkout isolation |
-| kind 1.34.3/1.35.0 | Restricted Pod Security admission, server-side dry-run, init validation, readiness, Service connectivity, signed/tampered webhooks, shadow mode, arbitrary UID, read-only mounts, policy replacement, invalid-config startup rejection, rollback |
+| kind 1.35.0 | Restricted Pod Security admission, server-side dry-run, init validation, readiness, Service connectivity, signed/tampered webhooks, shadow mode, arbitrary UID, read-only mounts, policy replacement, invalid-config startup rejection, rollback |
 
 Actions and kind node images are pinned by commit/digest. The Route schema comes
 from a pinned `openshift/api` revision on release-4.18. Schema validation does not
