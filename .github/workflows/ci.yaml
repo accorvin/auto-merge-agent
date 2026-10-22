@@ -137,9 +137,19 @@ jobs:
           go-version: "1.25.x"
           cache: false
       - name: Install pinned cluster tools
+        env:
+          KUBERNETES_VERSION: ${{ matrix.kubernetes }}
         run: |
           go install sigs.k8s.io/kind@v0.31.0
           go install sigs.k8s.io/kustomize/kustomize/v5@v5.6.0
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://dl.k8s.io/release/v$KUBERNETES_VERSION/bin/linux/amd64/kubectl" -o "$RUNNER_TEMP/kubectl"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://dl.k8s.io/release/v$KUBERNETES_VERSION/bin/linux/amd64/kubectl.sha256" -o "$RUNNER_TEMP/kubectl.sha256"
+          printf '%s  %s\n' "$(cat "$RUNNER_TEMP/kubectl.sha256")" "$RUNNER_TEMP/kubectl" | sha256sum --check
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$RUNNER_TEMP/kubectl" "$HOME/.local/bin/kubectl"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: runtime-image

@@ -6,7 +6,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
-RUN uv sync --locked --no-dev --no-editable
+RUN uv sync --locked --no-dev --no-editable \
+    && chmod -R a+rX /app/.venv
 
 FROM python:3.12-slim-bookworm AS runtime
 ENV PATH="/app/.venv/bin:$PATH" \
@@ -18,8 +19,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     AUTOMERGE_ACTIVE=false
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
+# Permissions are set before COPY to avoid duplicating the dependency layer.
 # All runtime files are readable by arbitrary OpenShift UIDs. Only /tmp is writable.
-RUN chmod -R a+rX /app
 USER 10001:0
 EXPOSE 8000
 ENTRYPOINT ["auto-merge-agent"]
