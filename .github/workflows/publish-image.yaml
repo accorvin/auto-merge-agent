@@ -1,0 +1,40 @@
+name: Publish image
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quay-publish-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  ci:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yaml
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      QUAY_IMAGE: ${{ vars.QUAY_IMAGE }}
+    steps:
+      - name: Validate repository setting
+        run: |
+          python - <<'PY'
+          import os, re
+          assert re.fullmatch(r"quay\.io/[a-z0-9_-]+/[a-z0-9_.-]+", os.environ["QUAY_IMAGE"]), "Set QUAY_IMAGE to quay.io/OWNER/REPOSITORY (without a tag)"
+          PY
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: runtime-image
+          path: ${{ runner.temp }}/image
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+      - name: Publish the exact image tested by CI
+        run: |
+          docker load --input "$RUNNER_TEMP/image/auto-merge-agent.tar"
+          docker tag auto-merge-agent:ci "$QUAY_IMAGE:sha-$GITHUB_SHA"
+          docker push "$QUAY_IMAGE:sha-$GITHUB_SHA"
+          printf 'Published `%s:sha-%s`\n' "$QUAY_IMAGE" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
