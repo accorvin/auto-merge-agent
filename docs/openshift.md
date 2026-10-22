@@ -14,28 +14,38 @@ runtime contains the installed application and dependencies, with no policy
 checkout, credentials, Git CLI, or runtime dependency installation. It supports
 an arbitrary non-root UID with a read-only root filesystem and writable `/tmp`.
 
-Create a Quay repository, then build/push with Podman (Docker works too):
+The production repository is `quay.io/opendatahub/auto-merge-agent`. Build and
+push with Podman (Docker works too):
 
 ```bash
-export AGENT_IMAGE=quay.io/YOUR_ORG/auto-merge-agent:sha-$(git rev-parse HEAD)
+export AGENT_IMAGE=quay.io/opendatahub/auto-merge-agent:sha-$(git rev-parse HEAD)
 podman build -f Containerfile -t "$AGENT_IMAGE" .
 podman login quay.io
 podman push "$AGENT_IMAGE"
 ```
 
-The image can also be published through GitHub Actions after this change lands
-on `main`. Configure these repository settings:
+The **Publish image** workflow uses GitHub OIDC federation, not a stored Quay
+password or a GitHub Actions secret. Before its first use, an `opendatahub` Quay
+organization administrator must create the robot account
+`auto-merge-agent-publisher`, grant it **Write** permission only on
+`opendatahub/auto-merge-agent`, and configure its federation entry as follows:
 
-| Setting | Type | Value |
-| --- | --- | --- |
-| `QUAY_IMAGE` | Actions variable | `quay.io/YOUR_ORG/YOUR_REPOSITORY`, without a tag |
-| `QUAY_USERNAME` | Actions secret | Quay robot account username with push access |
-| `QUAY_PASSWORD` | Actions secret | Robot account token |
+| Field | Value |
+| --- | --- |
+| Robot username | `opendatahub+auto-merge-agent-publisher` |
+| Issuer | `https://token.actions.githubusercontent.com` |
+| Subject | `repo:accorvin@5041129/auto-merge-agent@1429042077:ref:refs/heads/main` |
+
+Use the immutable OIDC subject shown in this repository's **Settings → Actions →
+OIDC** page as the source of truth; the value above is the expected immutable
+subject for this repository. Restricting it to `main` means pull-request runs and
+other branches cannot obtain a Quay push token. The workflow exchanges the GitHub
+OIDC token for Quay's short-lived robot token only while publishing.
 
 Run **Publish image** manually on `main`. It runs the entire CI workflow, then
 pushes the exact tested linux/amd64 image as `sha-<full-commit-sha>`. It does not
 rebuild after testing, publish from PRs, or deploy to a cluster. Ordinary CI needs
-none of these settings. For other CPU architectures, build and test separately.
+no Quay credentials. For other CPU architectures, build and test separately.
 Prefer a digest reference for deployments; tags can be overwritten in a registry.
 
 ## Prepare policies and Kustomize artifacts
