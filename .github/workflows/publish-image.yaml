@@ -30,7 +30,7 @@ jobs:
           oidc_token="$(
             curl --fail --silent --show-error \
               -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-              "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq --raw-output '.value'
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=quay" | jq --raw-output '.value'
           )"
           test -n "$oidc_token" && test "$oidc_token" != null
           echo "::add-mask::$oidc_token"

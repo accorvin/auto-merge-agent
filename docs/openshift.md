@@ -34,13 +34,15 @@ organization administrator must create the robot account
 | --- | --- |
 | Robot username | `opendatahub+auto-merge-agent-publisher` |
 | Issuer | `https://token.actions.githubusercontent.com` |
-| Subject | `repo:accorvin@5041129/auto-merge-agent@1429042077:ref:refs/heads/main` |
+| Audience | `quay` |
+| Subject | `repo:opendatahub-io@57720972/auto-merge-agent@1412421827:ref:refs/heads/main` |
 
 Use the immutable OIDC subject shown in this repository's **Settings → Actions →
 OIDC** page as the source of truth; the value above is the expected immutable
 subject for this repository. Restricting it to `main` means pull-request runs and
-other branches cannot obtain a Quay push token. The workflow exchanges the GitHub
-OIDC token for Quay's short-lived robot token only while publishing.
+other branches cannot obtain a Quay push token. The workflow requests the `quay`
+audience and exchanges the GitHub OIDC token for Quay's short-lived robot token
+only while publishing.
 
 Run **Publish image** manually on `main`. It runs the entire CI workflow, then
 pushes the exact tested linux/amd64 image as `sha-<full-commit-sha>`. It does not
